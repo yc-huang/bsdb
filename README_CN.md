@@ -39,14 +39,20 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 ##### 数据文件
 数据文件用于存储原始KV记录。
 每个记录的格式如下：
+
 |-1Byte,key lengh-|--2Bytes, value length--|---key---|-----value------|
+
 记录的首字节记录Key的长度，第2-3字节记录Value的长度，第4字节开始是Key的内容，接下来是Value的内容。Key的长度支持1-255字节，而Value的长度目前支持0-32510。
 
 数据文件内记录的排布支持两种格式：紧凑和分块。紧凑模式格式如下：
+
 [begin]|-record 1-|-record 2-|.....|-record n|[end]
+
 而分块模式下磁盘格式如下:
+
 [begin][block 1][block 2].....[block n][end]
-记录会先组装成Block，然后按Block写入数据文件; Block的大小为4K的倍数。单条记录不会跨Block存储，因此Block尾部可能会留下一部分未能利用的空间。对于记录大小大于一个Block的记录，会单独保存到一个Large Block， Large Block的大小也需要是4K的倍数，且Large Block尾部剩余的空间也不会用于保存其他记录。
+
+记录会先按紧凑格式组装成Block，然后按Block写入数据文件; Block的大小为4K的倍数。单条记录不会跨Block存储，因此Block尾部可能会留下一部分未能利用的空间。对于记录大小大于一个Block的记录，会单独保存到一个Large Block， Large Block的大小也需要是4K的倍数，且Large Block尾部剩余的空间也不会用于保存其他记录。
 
 紧凑模式节省磁盘空间，但查询时部分记录可能会跨越4K的边界，会对读性能有一些影响;分块模式下每个块都是对其到4K的，对读更友好。另外分块模式下可以支持压缩。
 
