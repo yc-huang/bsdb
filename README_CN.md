@@ -31,7 +31,84 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 |8            |0.39%           |
 |10            |0.097%           |
 |12            |0.025%           |
+
 完美Hash函数运行时需要加载到内存，其大小为：记录数 x ((3+checksum) / 8) 字节。对于一个100亿的数据集，checksum选择5，则完美Hash函数需要接近10GB的HEAP内存。
 
 第二级索引为一个基于磁盘的地址数组，每个地址预留的长度为8字节，因此第二级索引的大小为：记录数 x 8 字节。对于100亿记录的数据集，二级索引文件大概是80GB。二级索引文件运行时不需要加载到内存;如果系统的可用内存大于或者接近二级索引文件大小，则利用Buffered IO来读取索引文件，可以利用操作系统的页面缓存来加速;不过如果系统内存较小，则更适合利用Direct模式跳过系统缓存来读取二级索引文件，更有可能获得较高性能。
+
+##### 数据文件
+数据文件用于存储原始KV记录。
+每个记录的格式如下：
+|-1Byte,key lengh-|--2Bytes, value length--|---key---|-----value------|
+记录的首字节记录Key的长度，第2-3字节记录Value的长度，第4字节开始是Key的内容，接下来是Value的内容。Key的长度支持1-255字节，而Value的长度目前支持0-32510。
+
+数据文件内记录的排布支持两种格式：紧凑和分块。紧凑模式格式如下：
+[begin]|-record 1-|-record 2-|.....|-record n|[end]
+而分块模式下磁盘格式如下:
+[begin][block 1][block 2].....[block n][end]
+记录会先组装成Block，然后按Block写入数据文件; Block的大小为4K的倍数。单条记录不会跨Block存储，因此Block尾部可能会留下一部分未能利用的空间。对于记录大小大于一个Block的记录，会单独保存到一个Large Block， Large Block的大小也需要是4K的倍数，且Large Block尾部剩余的空间也不会用于保存其他记录。
+
+紧凑模式节省磁盘空间，但查询时部分记录可能会跨越4K的边界，会对读性能有一些影响;分块模式下每个块都是对其到4K的，对读更友好。另外分块模式下可以支持压缩。
+
+#### 构建过程
+
+#### 缓存
+目前BSDB内部没有提供任何缓存，这主要基于几个考虑：
+- 很多场景下查询输入的Key是完全随机的，且分布很散，缓存效率(命中/缓存大小)不高
+- 数据集不是特别大，或者系统内存资源很丰富，OS的页面缓存也很有效
+- 如果场景确有必要，应用层外挂一个缓存也是很成熟的方案
+- 缓存维护增加复杂性，也有性能开销
+
+#### 工具
+
+##### 数据库构建工具
+目前自带构建工具仅支持类似csv的文本输入，每行一个记录，记录格式为 <key><分隔符><value>。文件支持gz或者zstd压缩，压缩时文件名需要以.gz/.zstd结尾。其他格式的输入，可以参考Builder源码自行编写构建程序。
+
+命令：java -cp bsdb-jar-with-dependencies.jar ai.bsdb.Builder -i <文本格式kv文件路径>
+
+支持的参数：
+
+-i Specify input file or directory，指定输入的文本kv文件路径。
+-o Specify output directory, default to ./rdb， 指定数据库的输出目录，缺省为./rdb。
+-s Specify key/value separator, default to space " "，指定kv的分隔符，缺省为一个空格。
+-e Specify input file encoding, default to UTF-8，指定输入文本文件的字符编码，缺省为UTF-8。
+-c Specify checksum bit length, default to 4，指定构建的索引中的checksum的bit数，建议2-16.增大该选项对查询不在数据库中的记录有帮助，但是也会需要更多的内存(记录数乘bit数)
+-v Verify integrity of generated index, 命令行包含此参数，构建完成后，会查询/比对输入文件中的所有记录。
+-ps Memory cache size in MB used when generation index，指定生成索引时使用的缓存大小，缺省1GB。注意打开生成模糊模式索引会同时构建两份索引(精确和模糊)，有双份的内存消耗。完整索引的大小为 记录数x8 bytes, 如果完整索引大小大于-ps指定的大小，则需要多次扫描数据库文件来生成索引。
+-z Compression the db record file,生成压缩的数据文件
+-bs Block size for compression,压缩的块大小,缺省 4096 bytes
+-a Approximate mode, keys will not be stored, choosing proper checksum bits to meet false-positive query rate,生成模糊查询模式索引
+-temp Root directory for temp file, default to /tmp, should have enough space to store all keys, 临时文件的根目录，需要有足够的空间来保存所有的key，用于构建perfect hash函数，缺省是/tmp        
+
+
+样例：
+java -ms4096m -mx4096m -verbose:gc 
+  --illegal-access=permit 
+  --add-exports java.base/jdk.internal.ref=ALL-UNNAMED
+  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED
+  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 
+  -Dit.unimi.dsi.sux4j.mph.threads=16 
+  -cp bsdb-jar-with-dependencies.jar 
+  ai.bsdb.Builder -v -i ./kv.txt.zstd -ps 8192
+
+
+系统也提供了读取HDFS文件系统上打Parquet文件来构建数据库的工具：
+命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] ai.bsdb.ParquetBuilder 
+
+除了普通Builder打参数，ParquetBuilder还需要指定以下参数：
+-nn Name Node url，HDFS Name Node的地址
+-kf key field name，用于读取key的parquet column name
+
+样例：
+/home/hadoop/jdk-11.0.2/bin/java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=32 -Dit.unimi.dsi.sux4j.mph.threads=32 -cp ../bsdb-jar-with-dependencies.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://bj-jd-dc-namenode-prod-0003.tendcloud.com:9820 -i  /fe/di/service/xhs/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data1/tmp
+
+启动程序前，需要确保当前登录系统已经通过kerbros认证，有足够打权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如： kinit sd@HADOOP.COM -k -t ~/sd.keytab
+
+#### 注意事项
+- JDK版本支持9-11，暂不支持17等更高版本
+- 输入文件中的key不可以有重复
+- 构建工具可以基于传统磁盘运行，提供在线服务的时候需要SSD。由于每次查询需要两次磁盘IO，所以查询的qps大体等于磁盘随机IOPS/2，比如一个50万IOPS能力的SSD，理想情况下能达到接近20-25万查询QPS
+- 紧凑模式下磁盘空间需求：记录数 x ((3+checksum) / 8 + 8 + 2) + key总大小×2 + value总大小
+- 构建时内存需求：HEAP Memory： Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB， 实测构建50亿记录大概需要6GB的heap memory。Off heap memory： cache size，由ps参数指定。
+- 运行时内存需求：Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB.例如对于记录数是2B，checksum是4bit，大概是1.7GB.
 
