@@ -117,7 +117,7 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 #### 注意事项
 - JDK版本支持9-11，暂不支持17等更高版本
 - 输入文件中的key不可以有重复
-- 构建工具可以基于传统磁盘运行，提供在线服务的时候需要SSD。由于每次查询需要两次磁盘IO，所以查询的qps大体等于磁盘随机IOPS/2，比如一个50万IOPS能力的SSD，理想情况下能达到接近20-25万查询QPS
+- 构建工具可以基于传统磁盘运行，提供在线服务的时候需要SSD。由于每次查询需要两次磁盘IO，所以查询的qps大体等于磁盘随机IOPS/2，比如一个50万IOPS能力的SSD，理想情况下能达到接近20-25万查询QPS.模糊索引模式下只需要一次磁盘IO，理论上查询性能可以翻倍，不过只适用于部分对于查询结果可以容忍一定比例错误的场景（比如广告），并且Value的大小也有限制(目前是不超过8 Bytes)
 - 紧凑模式下磁盘空间需求：记录数 x ((3+checksum) / 8 + 8 + 2) + key总大小×2 + value总大小
 - 构建时内存需求：HEAP Memory： Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB， 实测构建50亿记录大概需要6GB的heap memory。Off heap memory： cache size，由ps参数指定。
 - 运行时内存需求：Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB.例如对于记录数是2B，checksum是4bit，大概是1.7GB.
