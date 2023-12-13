@@ -68,41 +68,45 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 
 支持的参数：
 
--i Specify input file or directory，指定输入的文本kv文件路径。
--o Specify output directory, default to ./rdb， 指定数据库的输出目录，缺省为./rdb。
--s Specify key/value separator, default to space " "，指定kv的分隔符，缺省为一个空格。
--e Specify input file encoding, default to UTF-8，指定输入文本文件的字符编码，缺省为UTF-8。
--c Specify checksum bit length, default to 4，指定构建的索引中的checksum的bit数，建议2-16.增大该选项对查询不在数据库中的记录有帮助，但是也会需要更多的内存(记录数乘bit数)
--v Verify integrity of generated index, 命令行包含此参数，构建完成后，会查询/比对输入文件中的所有记录。
--ps Memory cache size in MB used when generation index，指定生成索引时使用的缓存大小，缺省1GB。注意打开生成模糊模式索引会同时构建两份索引(精确和模糊)，有双份的内存消耗。完整索引的大小为 记录数x8 bytes, 如果完整索引大小大于-ps指定的大小，则需要多次扫描数据库文件来生成索引。
--z Compression the db record file,生成压缩的数据文件
--bs Block size for compression,压缩的块大小,缺省 4096 bytes
--a Approximate mode, keys will not be stored, choosing proper checksum bits to meet false-positive query rate,生成模糊查询模式索引
--temp Root directory for temp file, default to /tmp, should have enough space to store all keys, 临时文件的根目录，需要有足够的空间来保存所有的key，用于构建perfect hash函数，缺省是/tmp        
+- -i Specify input file or directory，指定输入的文本kv文件路径。
+- -o Specify output directory, default to ./rdb， 指定数据库的输出目录，缺省为./rdb。
+- -s Specify key/value separator, default to space " "，指定kv的分隔符，缺省为一个空格。
+- -e Specify input file encoding, default to UTF-8，指定输入文本文件的字符编码，缺省为UTF-8。
+- -c Specify checksum bit length, default to 4，指定构建的索引中的checksum的bit数，建议2-16.增大该选项对查询不在数据库中的记录有帮助，但是也会需要更多的内存(记录数乘bit数)
+- -v Verify integrity of generated index, 命令行包含此参数，构建完成后，会查询/比对输入文件中的所有记录。
+- -ps Memory cache size in MB used when generation index，指定生成索引时使用的缓存大小，缺省1GB。注意打开生成模糊模式索引会同时构建两份索引(精确和模糊)，有双份的内存消耗。完整索引的大小为 记录数x8 bytes, 如果完整索引大小大于-ps指定的大小，则需要多次扫描数据库文件来生成索引。
+- -z Compression the db record file,生成压缩的数据文件
+- -bs Block size for compression,压缩的块大小,缺省 4096 bytes
+- -a Approximate mode, keys will not be stored, choosing proper checksum bits to meet false-positive query rate,生成模糊查询模式索引
+- -temp Root directory for temp file, default to /tmp, should have enough space to store all keys, 临时文件的根目录，需要有足够的空间来保存所有的key，用于构建perfect hash函数，缺省是/tmp        
 
 
 样例：
-java -ms4096m -mx4096m -verbose:gc 
-  --illegal-access=permit 
-  --add-exports java.base/jdk.internal.ref=ALL-UNNAMED
-  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED
-  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 
-  -Dit.unimi.dsi.sux4j.mph.threads=16 
-  -cp bsdb-jar-with-dependencies.jar 
-  ai.bsdb.Builder -v -i ./kv.txt.zstd -ps 8192
 
 
+    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies.jar   ai.bsdb.Builder -v -i ./kv.txt.zstd -ps 8192  
+
+    
+
+
+###### Parquet Builder
 系统也提供了读取HDFS文件系统上打Parquet文件来构建数据库的工具：
 命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] ai.bsdb.ParquetBuilder 
 
 除了普通Builder打参数，ParquetBuilder还需要指定以下参数：
--nn Name Node url，HDFS Name Node的地址
--kf key field name，用于读取key的parquet column name
+- -nn Name Node url，HDFS Name Node的地址
+- -kf key field name，用于读取key的parquet column name
 
 样例：
-/home/hadoop/jdk-11.0.2/bin/java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=32 -Dit.unimi.dsi.sux4j.mph.threads=32 -cp ../bsdb-jar-with-dependencies.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://bj-jd-dc-namenode-prod-0003.tendcloud.com:9820 -i  /fe/di/service/xhs/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data1/tmp
 
-启动程序前，需要确保当前登录系统已经通过kerbros认证，有足够打权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如： kinit sd@HADOOP.COM -k -t ~/sd.keytab
+
+    /home/hadoop/jdk-11.0.2/bin/java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=32 -Dit.unimi.dsi.sux4j.mph.threads=32 -cp ../bsdb-jar-with-dependencies.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://bj-jd-dc-namenode-prod-0003.tendcloud.com:9820 -i  /fe/di/service/xhs/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data1/tmp  
+
+
+启动程序前，需要确保当前登录系统已经通过kerbros认证，有足够打权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如：
+
+    kinit sd@HADOOP.COM -k -t ~/sd.keytab
+
 
 #### 注意事项
 - JDK版本支持9-11，暂不支持17等更高版本
