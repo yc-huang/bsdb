@@ -298,5 +298,5 @@ BSDB同步查询性能：
 #### 后续计划
 
 - 压缩相关的优化
-- 基于C或Rust实现的Reader
-- Python的Reader支持
+- 基于C或Rust实现的Reader API
+- Reader API的Python支持
