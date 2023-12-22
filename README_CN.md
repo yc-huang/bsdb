@@ -260,9 +260,9 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 
 ###### 性能测试结果
-测试环境：京东云 存储优化IO型实例 s.i3.4xlarge，配置 16cpu cores，64GB内存，2 x 1862 NVMe SSD。
+测试环境：京东云 存储优化IO型实例 s.i3.4xlarge，配置 16 cpu cores，64GB内存，2 x 1862 NVMe SSD。
 
-实测实例的CPU型号为：Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz， 24核心，48超线程，应该是给实例分配了1/3的核心。   
+实测实例的CPU型号为：Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz， 24核心，48超线程，应该是给实例分配了1/3的超线程核心。   
 
 利用fio测试磁盘randread性能，io_uring和aio engine在bs=4K可以达到1300K iops， bs=8K大约700K iops，bs=16K大约380K iops。
 
