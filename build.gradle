@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'c'
     id 'maven'
+    id 'maven-publish'
 }
 
 group 'ai.bsdb.core'
@@ -140,10 +141,32 @@ task customFatJar(type: Jar) {
     manifest {
         attributes 'Main-Class': 'ai.bsdb.tools.Builder'
     }
-    archiveName = 'bsdb-jar-with-dependencies.jar'
+    archiveName = 'bsdb-jar-with-dependencies-' + version + '.jar'
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
     with jar
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'ai.bsdb'
+            artifactId = 'bsdb-core'
+            version = '0.1.2'
+
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            name = "OSSRH"
+            url = "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+            credentials {
+                username = System.getenv("MAVEN_USERNAME")
+                password = System.getenv("MAVEN_PASSWORD")
+            }
+        }
+    }
 }
 
 build.dependsOn("bsdbjniSharedLibrary")
