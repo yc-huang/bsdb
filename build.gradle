@@ -1,0 +1,151 @@
+plugins {
+    id 'java'
+    id 'c'
+    id 'maven'
+}
+
+group 'ai.bsdb.core'
+version '0.1.2'
+
+sourceCompatibility = 1.9
+
+compileJava {
+    options.warnings = false
+    options.deprecation = false
+    options.compilerArgs += ["-Xdoclint:none", "-Xlint:none", "-nowarn", "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"]
+}
+compileTestJava {
+    options.warnings = false
+    options.deprecation = false
+    options.compilerArgs += ["-Xdoclint:none", "-Xlint:none", "-nowarn", "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"]
+}
+
+tasks.withType(JavaCompile) {
+    println 'Compiler args: ' + options.compilerArgs
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    testCompile group: 'junit', name: 'junit', version: '4.13.1'
+
+    implementation group: 'org.xerial.larray', name: 'larray_2.12', version: '0.4.0'
+    implementation 'org.xerial.larray:larray-mmap:0.4.1'
+
+    implementation 'com.conversantmedia:disruptor:1.2.16'
+
+    implementation 'com.github.luben:zstd-jni:1.5.5-9'
+
+    implementation 'it.unimi.dsi:sux4j:5.4.1'
+
+    implementation 'commons-cli:commons-cli:1.4'
+    implementation 'org.apache.commons:commons-collections4:4.4'
+    implementation 'org.apache.commons:commons-configuration2:2.9.0'
+    implementation 'commons-beanutils:commons-beanutils:1.9.4'
+
+    implementation 'org.apache.parquet:parquet-hadoop-bundle:1.13.1'
+    compileOnly 'org.apache.hadoop:hadoop-common:3.2.4'
+
+    implementation 'io.netty:netty-all:4.1.99.Final'
+
+    implementation 'org.msgpack:msgpack-core:0.9.6'
+
+    implementation 'com.google.guava:guava:31.1-jre'
+    implementation group: 'org.slf4j', name: 'slf4j-simple', version: '2.0.3'
+
+}
+
+test {
+    testLogging.showStandardStreams = true
+    systemProperty "java.library.path", file("${buildDir}/libs/bsdbjni/shared").absolutePath
+}
+
+
+processResources {
+    from "${buildDir}/libs/bsdbjni/shared/"
+}
+
+
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+artifacts {
+    archives sourcesJar
+}
+
+
+model {
+    buildTypes {
+        release
+    }
+    
+    binaries {
+        all {
+            if (toolChain in Gcc) {
+                cCompiler.args "-O2"
+                linker.args "-shared", "-fPIC",  "-luring"
+            }
+        }
+    }
+
+    repositories {
+        libs(PrebuiltLibraries) {
+            jdk {
+                headers.srcDirs "${System.properties['java.home']}/include",
+                        "${System.properties['java.home']}/include/win32",
+                        "${System.properties['java.home']}/include/darwin",
+                        "${System.properties['java.home']}/include/linux"
+            }
+
+	    liburing {
+                headers.srcDirs "${System.getenv("LIBURING_PATH")}/src",
+                        "${System.getenv("LIBURING_PATH")}/src/include",
+                        "${System.getenv("LIBURING_PATH")}/src/include/liburing"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("${System.getenv("LIBURING_PATH")}/src/liburing.so")
+                }
+            }
+        }
+    }
+
+    platforms {
+        x64 { architecture "x86_64" }
+    }
+
+    components {
+        bsdbjni(NativeLibrarySpec) {
+            sources {
+                c {
+                    source {
+                        lib library: 'bsdbjni', linkage: 'static'
+                        lib library: 'liburing', linkage: 'api'
+                        lib library: 'jdk', linkage: 'api'
+                        srcDir "src/main/c"
+                        include "**/*.c"
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+task customFatJar(type: Jar) {
+    manifest {
+        attributes 'Main-Class': 'ai.bsdb.tools.Builder'
+    }
+    archiveName = 'bsdb-jar-with-dependencies.jar'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    with jar
+}
+
+build.dependsOn("bsdbjniSharedLibrary")
+test.dependsOn("bsdbjniSharedLibrary")
+processResources.dependsOn("bsdbjniSharedLibrary")
