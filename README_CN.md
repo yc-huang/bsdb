@@ -294,3 +294,8 @@ BSDB同步查询性能：
 - 构建时内存需求：HEAP Memory： Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB， 实测构建50亿记录大概需要6GB的heap memory。Off heap memory： cache size，由ps参数指定。
 - 运行时内存需求：Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB.例如对于记录数是2B，checksum是4bit，大概是1.7GB.
 
+#### 后续计划
+
+- 压缩相关的优化
+- 基于C或Rust实现的Reader
+- Python的Reader支持
