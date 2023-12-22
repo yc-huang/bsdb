@@ -16,6 +16,12 @@ BSDB是一种新型的只读KV数据库。
 - 低时延。读路径短，且IO没有干扰，有利于保持高的吞吐量和稳定的时延。
 - 可扩展。通过简单复制来启动多个实例，达到真正无性能损失的无限线性扩展。
 
+#### 特色功能
+对于某些特定应用场景，应用对查询结果的准确性可以容忍一定的错误率，此时利用BSDB的模糊索引功能，能够大幅提高查询的qps(理论上相对普通索引模式增加一倍)。
+- 对于包含在数据库中的key，可以保证查得正确结果
+- 对于不包含在数据库中的key，查询可能返回null，也可能返回一条错误记录，其错误率和checksum bits相关
+- 对应的value大小有限制，目前只会保存value的前8 bytes;且不管插入时是什么格式，查得的value会统一返回为byte[8]数组，应用层需要自行进行处理
+
 #### 存储结构设计
 BSDB是一种KV数据库，核心由配置文件，数据文件和索引文件构成。KV记录保存在数据文件里，索引文件则记录了某个Key对应的记录在数据文件内的位置，而配置文件中记录构建时的参数和数据库的统计信息。
 
@@ -40,21 +46,33 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 数据文件用于存储原始KV记录。
 每个记录的格式如下：
 
-|-1Byte,key lengh-|--2Bytes, value length--|---key---|-----value------|
+    [record begin][record header][key][value][record end]  
 
-记录的首字节记录Key的长度，第2-3字节记录Value的长度，第4字节开始是Key的内容，接下来是Value的内容。Key的长度支持1-255字节，而Value的长度目前支持0-32510。
+记录的开头是record header，header的首字节记录Key的长度，第2-3字节记录Value的长度。record header后边是Key的具体内容，接下来是Value的具体内容。Key的长度支持1-255字节，而Value的长度目前限定为0-32510。
 
 数据文件内记录的排布支持两种格式：紧凑和分块。紧凑模式格式如下：
 
-[begin]|-record 1-|-record 2-|.....|-record n|[end]
+    [file begin]|-record 1-|-record 2-|.....|-record n|[file end]
 
 而分块模式下磁盘格式如下:
 
-[begin][block 1][block 2].....[block n][end]
+    [file begin][block 1][block 2].....[block n][file end]
 
 记录会先按紧凑格式组装成Block，然后按Block写入数据文件; Block的大小为4K的倍数。单条记录不会跨Block存储，因此Block尾部可能会留下一部分未能利用的空间。对于记录大小大于一个Block的记录，会单独保存到一个Large Block， Large Block的大小也需要是4K的倍数，且Large Block尾部剩余的空间也不会用于保存其他记录。
 
 紧凑模式节省磁盘空间，但查询时部分记录可能会跨越4K的边界，会对读性能有一些影响;分块模式下每个块都是对其到4K的，对读更友好。另外分块模式下可以支持压缩。
+
+目前数据库文件也支持压缩，压缩算法为ZSTD，压缩级别缺省为6(测试表明不一定压缩级别越高，压缩率就一定更好，也会有变差的情况)。压缩格式下数据文件的磁盘格式如下：
+
+    [file begin][compressed block 1][compressed block 2].....[compressed block n][file end]
+
+compressed block在磁盘上是紧凑排列; 后续计划增加compressed block按Page对齐的格式支持。每个compressed block内部的格式如下：
+
+    [block begin][block header][block data][block end]
+
+其中block header为8 bytes，1-2字节为压缩后数据的长度，3-4字节为压缩前数据的长度，5-8字节保留; 只是用2字节来表示长度是因为BSDB预期的场景更多是保存相对小的记录。block data部分则用于保存压缩后的block数据。
+
+
 
 #### 构建过程
 
@@ -64,6 +82,8 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 - 数据集不是特别大，或者系统内存资源很丰富，OS的页面缓存也很有效
 - 如果场景确有必要，应用层外挂一个缓存也是很成熟的方案
 - 缓存维护增加复杂性，也有性能开销
+
+当然对某些场景，查询还是有一定的局部性，此时通过内存还是能换来一定的性能提升，且现在云主机大都每CPU配置的内存比较高(4-8GB)，对于BSDB来说往往是CPU偏少而内存偏多，此时或许应该考虑引入Block Cache来充分利用内存。
 
 #### 工具
 
@@ -78,21 +98,23 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 - -o Specify output directory, default to ./rdb， 指定数据库的输出目录，缺省为./rdb。
 - -s Specify key/value separator, default to space " "，指定kv的分隔符，缺省为一个空格。
 - -e Specify input file encoding, default to UTF-8，指定输入文本文件的字符编码，缺省为UTF-8。
-- -c Specify checksum bit length, default to 4，指定构建的索引中的checksum的bit数，建议2-16.增大该选项对查询不在数据库中的记录有帮助，但是也会需要更多的内存(记录数乘bit数)
+- -c Use compact record layout on disk, 使用紧凑格式的数据文件; 缺省使用分块模式。
+- -cb Specify checksum bit length, default to 4，指定构建的索引中的checksum的bit数，建议2-16.增大该选项对查询不在数据库中的记录有帮助，但是也会需要更多的内存(记录数乘bit数)
 - -v Verify integrity of generated index, 命令行包含此参数，构建完成后，会查询/比对输入文件中的所有记录。
-- -ps Memory cache size in MB used when generation index，指定生成索引时使用的缓存大小，缺省1GB。注意打开生成模糊模式索引会同时构建两份索引(精确和模糊)，有双份的内存消耗。完整索引的大小为 记录数x8 bytes, 如果完整索引大小大于-ps指定的大小，则需要多次扫描数据库文件来生成索引。
-- -z Compression the db record file,生成压缩的数据文件
-- -bs Block size for compression,压缩的块大小,缺省 4096 bytes
-- -a Approximate mode, keys will not be stored, choosing proper checksum bits to meet false-positive query rate,生成模糊查询模式索引
-- -temp Root directory for temp file, default to /tmp, should have enough space to store all keys, 临时文件的根目录，需要有足够的空间来保存所有的key，用于构建perfect hash函数，缺省是/tmp        
+- -ps Memory cache size in MB used when generation index，指定生成索引时使用的缓存大小，单位为MB，缺省为1GB。注意打开生成模糊模式索引会同时构建两份索引(精确和模糊)，有双份的内存消耗。完整索引的大小为 记录数x8 bytes, 如果完整索引大小大于-ps指定的大小，则需要多次扫描数据库文件来生成索引。
+- -z Compression the db record file,生成压缩的数据文件。
+- -bs Block size for compression,压缩的块大小,缺省 4096 bytes。
+- -a Approximate mode, keys will not be stored, choosing proper checksum bits to meet false-positive query rate,生成模糊查询模式索引。
+- -temp Root directory for temp file, default to /tmp, should have enough space to store all keys, 构建完美Hash时临时文件的根目录，需要有足够的空间来保存所有的key，用于构建perfect hash函数，缺省是/tmp。
 
 
 样例：
 
+    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies-0.1.2.jar   ai.bsdb.Builder -i ./kv.txt.zstd -ps 8192  
 
-    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies.jar   ai.bsdb.Builder -v -i ./kv.txt.zstd -ps 8192  
-
-    
+说明：
+- -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 用于控制写入数据的并发数量，建议设置为CPU的逻辑核心数量，以保证构建时可以充分利用CPU
+- -Dit.unimi.dsi.sux4j.mph.threads=16 用于控制构建完美Hash的并发数量，也建议设置为CPU的逻辑核心数量
 
 
 ###### Parquet Builder
@@ -106,17 +128,151 @@ BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash
 样例：
 
 
-    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=32 -Dit.unimi.dsi.sux4j.mph.threads=32 -cp ../bsdb-jar-with-dependencies.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data1/tmp  
+    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
 
 
 启动程序前，需要确保当前登录系统已经通过kerbros认证，有足够打权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如：
 
     kinit sd@HADOOP.COM -k -t ~/sd.keytab
 
+##### Web服务工具
+系统提供了一个简易的基于Netty的Web查询服务。
+命令： java -cp bsdb-jar-with-dependencies.jar ai.bsdb.HttpServer -d <数据库文件的根目录>
+支持的参数：
+-A Specify http listen port, default to 0.0.0.0
+-p Specify http listen port, default to 9999
+-d Specify data directory, default to ./rdb
+-P Specify http uri prefix, default to /bsdb/
+-t Specify worker thread number, default to processor count
+-a Approximate mode,模糊查询模式
+-ic Cache Index,index will be loaded to memory.Must have sufficient memory to load ./rdb/index.db，预加载全量索引到内存，需要确保系统有足够的内存(加载使Off-heap memory，因此不需要调整java的heap memory)
+-id Use direct IO to read index, 使用direct IO模式读取索引，在索引文件远大于内存时建议开启
+-kd Use direct IO to read KV file, 使用direct IO模式读取KV记录，在kv.db远大于内存时建议开启
+-async Use async mode to query db,使用异步模式访问数据库
+-json Deserialize stored values as json output, 将value转化为JSON格式输出，只适用于利用parquet文件构建的数据库
+  
+样例：
+
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar ai.bsdb.HttpServer -d ./rdb -kd -id    
+
+
+缺省情况下可以通过 http://xxxx:9999/bsdb/<key>来查询数据。
+
+##### API
+基于性能考虑，目前BSDB提供作为内嵌数据库的查询API。
+
+    import ai.bsdb.read.SyncReader;
+
+    String dbPath = ".";
+    SyncReader db = new SyncReader(new File(dbPath), false, false, true, true);
+
+    byte[] key = "key1".getBytes();
+    byte[] value = db.getAsBytes(key);
+
+同时也提供了对异步查询的支持：
+
+    import ai.bsdb.read.AsyncReader;
+
+    String dbPath = ".";
+    AsyncReader db = new AsyncReader(new File(dbPath), false, true, true);
+
+    byte[] key = "key1".getBytes();
+    db.asyncGet(key, null, new CompletionHandler<byte[], Object>() {
+        @Override
+        public void completed(byte[] value, Object object) {
+            logger.debug("query return {} for key:{}", Arrays.toString(value), Arrays.toString(key));
+        }
+
+        @Override
+        public void failed(Throwable throwable, Object objects) {
+            logger.error("query failed", throwable);
+        }
+    });
+
+
+##### 性能测试工具
+系统提供了几个简单的查询性能测试工具，可以用于评估数据库的性能。
+
+###### 同步查询性能测试工具
+命令：
+
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.QueryBench -d <数据库文件的根目录> -k <文本格式kv文件路径> [-s <separator>] [-a] [-ic] [-id] [-kd] [-v]
+
+支持的参数：
+
+- -d Specify data directory, default to ./rdb
+- -k Specify input file for sequential query keys，用于查询的key文件，格式和用于build数据库的相同。
+- -s Specify key/value separator, default to space " "，指定kv的分隔符，缺省为一个空格。
+- -a Approximate mode,模糊查询模式
+- -ic Cache Index,index will be loaded to memory.Must have sufficient memory to load ./rdb/index.db，加载索引到内存
+- -id Use direct IO to read index, 使用direct IO模式读取索引，在索引文件远大于内存是建议开启
+- -kd Use direct IO to read KV file, 使用direct IO模式读取KV记录，在kv.db远大于内存是建议开启
+- -v Verify,检查查得的value和输入是否一致
+
+同时需要通过-Djava.util.concurrent.ForkJoinPool.common.parallelism=<num> 来调整JVM的Common forkjoin pool的并发数量来控制数据库查询的并发; 同步模式下，通常需要比较高的并发才能充分发挥NVME SSD的性能。
+
+样例：
+
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G  -Djava.util.concurrent.ForkJoinPool.common.parallelism=320 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar  ai.bsdb.bench.QueryBench -id -kd -v -k ../100e_id 
+
+###### 异步查询性能测试工具
+命令：
+
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.AsyncQueryBench -d <数据库文件的根目录> -k <文本格式kv文件路径> [-s <separator>] [-a] [-id] [-kd] [-v]
+
+支持的参数：
+
+- -d Specify data directory, default to ./rdb
+- -k Specify input file for sequential query keys，用于查询的key文件，格式和用于build数据库的相同。
+- -s Specify key/value separator, default to space " "，指定kv的分隔符，缺省为一个空格。
+- -a Approximate mode,模糊查询模式
+- -id Use direct IO to read index, 使用direct IO模式读取索引，在索引文件远大于内存是建议开启
+- -kd Use direct IO to read KV file, 使用direct IO模式读取KV记录，在kv.db远大于内存是建议开启
+- -v Verify,检查查得的value和输入是否一致
+
+同时支持如下的系统属性：
+
+- bsdb.uring 使用IO Uring，缺省关闭
+- bsdb.reader.index.submit.threads index文件并发读取线程数量
+- bsdb.reader.kv.submit.threads 数据文件并发读取线程数量
+- java.util.concurrent.ForkJoinPool.common.parallelism 系统Common forkjoin pool的并发线程数量，用于控制读取输入文件的并行
+
+样例：
+
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar    ai.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id 
+
+
+###### 性能测试结果
+测试环境：京东云 存储优化IO型实例 s.i3.4xlarge，配置 16cpu cores，64GB内存，2 x 1862 NVMe SSD。
+
+实测实例的CPU型号为：Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz， 24核心，48超线程，应该是给实例分配了1/3的核心。   
+
+利用fio测试磁盘randread性能，io_uring和aio engine在bs=4K可以达到1300K iops， bs=8K大约700K iops，bs=16K大约380K iops。
+
+测试数据集包含130亿条记录，详细情况如下：
+    
+    kv.compressed = false
+    kv.compact = false
+    index.approximate = false
+    hash.checksum.bits = 4
+    kv.count = 13193787549
+    kv.key.len.max = 13
+    kv.key.len.avg = 13
+    kv.value.len.max = 36
+    kv.value.len.avg = 32
+
+BSDB同步查询性能：
+
+|threads|16|32|48|64|80|96|112|128|144|160|176|192|208|224|240|256|272|286|302|318|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
+
+
 
 #### 注意事项
 - JDK版本支持9-11，暂不支持17等更高版本
-- 输入文件中的key不可以有重复
+- 操作系统目前支持x86_64 Linux，若使用IO Uring，需要kernel版本至少5.1x.
+- 输入文件中的key不可以有重复,需要预先排重
 - 构建工具可以基于传统磁盘运行，提供在线服务的时候需要SSD。由于每次查询需要两次磁盘IO，所以查询的qps大体等于磁盘随机IOPS/2，比如一个50万IOPS能力的SSD，理想情况下能达到接近20-25万查询QPS.模糊索引模式下只需要一次磁盘IO，理论上查询性能可以翻倍，不过只适用于部分对于查询结果可以容忍一定比例错误的场景（比如广告），并且Value的大小也有限制(目前是不超过8 Bytes)
 - 紧凑模式下磁盘空间需求：记录数 x ((3+checksum) / 8 + 8 + 2) + key总大小×2 + value总大小
 - 构建时内存需求：HEAP Memory： Perfect Hash常驻内存为：记录数 x ((3+checksum) / 8) Bytes + extra 2GB， 实测构建50亿记录大概需要6GB的heap memory。Off heap memory： cache size，由ps参数指定。
