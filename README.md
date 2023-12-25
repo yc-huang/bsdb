@@ -83,3 +83,252 @@ The compact mode use less disk space but may affect read performance since some 
 The database file currently supports compression as well, and the chosen compression algorithm is ZSTD. The compression level is default to 6 (tests show that higher compression levels do not necessarily result in better compression rates and may have variations). The disk format of the compressed data file is as following:
 
     [file begin][compressed block 1][compressed block 2]
+
+Compressed blocks are arranged compactly on disk. There are plans to add support for aligned compressed blocks in the future. The internal format of each compressed block is as follows:
+
+    [block begin][block header][block data][block end]
+
+The block header is 8 bytes long, where the first two bytes represent the length of the compressed data, the next two bytes represent the length of the original uncompressed data, and the remaining 4 bytes are reserved. Using only 2 bytes to represent the length is because BSDB expects to handle relatively small records. The block data section is used to store the block data after compressing.
+
+#### Build Process
+
+The current workflow of the Builder tool is as follows:
+
+- Sample the input files to collect some statistical information about K and V, including compression-related details, and generate a prebuilt shared compression dictionary.
+- Parse the input data files to construct BSDB data files and collect all the keys. 
+- Build a perfect hash using the collected keys.
+- Scan the BSDB data files, iterate through all keys and collect the addresses of corresponding KV records; query the perfect hash, and construct the index file.
+
+During the third step of building the index file, the index content is constructed in memory and then written to disk in batch to avoid random I/O. This allows the build process to be efficiently completed in environments based on HDD or cloud object storage. In cases where the database has a large number of records and the entire index cannot fit in memory, the Builder tool solves this by scanning the data files multiple times and building a portion of the index each time. The size of the off-heap memory used to hold index can be set using the "ps" parameter.
+
+#### Caching
+
+Currently, BSDB does not provide any internal caching, and this is based on several considerations:
+
+- In many scenarios, the input keys for queries are completely random and widely distributed, resulting in very low cache efficiency (cache hits/cache size).
+- If system memory size is on par with active dataset, the OS page cache should work well.
+- If necessary, plugin an external cache at the application layer is a mature solution.
+- Maintaining caches adds complexity and incurs performance overhead.
+
+However, for certain scenarios, there is still some locality in queries, and in such cases, using memory more aggressively can achieve performance improvements. Moreover, most cloud instances nowadays have a relatively high amount of memory per CPU configuration (4-8GB), which often means that the server running BSDB tends to have fewer CPUs and more memory as expected. In such cases, it might be worth considering to introduce a Block Cache to fully utilize the available memory.
+
+#### Tools
+##### Builder
+
+The built-in Builder tool currently supports text input formats similar to CSV, with one record per line in the format of <key><delimiter><value>. The input file can be compressed with gzip or zstd, and the corresponding compressed file name should have the extension of .gz or .zstd. For other input formats, you can refer to the Builder source code to write your own construction program.
+
+Command: 
+
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.Builder -i <text_format_kv_file_path>
+
+Supported parameters:
+
+-    -i: Specify input file or directory.
+-    -o: Specify output directory, default to ./rdb.
+-    -s: Specify key/value separator, default to space " ".
+-    -e: Specify input file encoding, default to UTF-8.
+-    -c: Use compact record layout on disk, default: False, use block mode.
+-    -cb: Specify checksum bit length, default to 4. It is recommended to set it between 2 and 16. Increasing this helps to improve performance with queries for records not in the database, but it also requires more heap memory (number of records * bit length).
+-    -v: Verify integrity of the generated index. If this parameter is included in the command line, it will query and compare all records in the input file after construction.
+-    -ps: Memory cache size in MB used when generating the index. The default is 1 GB. Note that enabling the generation of approximate index (-a) will build two copies of the index (exact and approximate), resulting in double memory consumption. The size of the full index is calculated as the number of records multiplied by 8 bytes. If the size of the full index exceeds the value specified by -ps, the database files need to be scanned multiple times to generate the index.
+-    -z: Compression the db record files.
+-    -bs: Block size in bytes for compression, the default is 4096 bytes.
+-    -a: generate approximate mode index, choosing proper checksum bits to meet the expected false-positive query rate.
+-    -temp: Root directory for temp files, default to /tmp. It should have enough space to store all keys when building a perfect hash.
+
+Example:
+
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp bsdb-jar-with-dependencies-0.1.2.jar ai.bsdb.Builder -i ./kv.txt.zstd -ps 8192
+
+Note:
+
+-    -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 is used to control the number of concurrent inserts. It is recommended to set it to the number of logical cores of the CPU to fully utilize the CPU during construction.
+-    -Dit.unimi.dsi.sux4j.mph.threads=16 is used to control the number of concurrent operations when building the perfect hash. It is also recommended to set it to the number of logical cores of the CPU.
+
+##### Parquet Builder
+
+BSDB also provides a tool to build a database by reading Parquet files on the HDFS file system:
+
+Command: 
+
+    java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] ai.bsdb.ParquetBuilder
+
+In addition to the parameters of the regular Builder, ParquetBuilder requires the following extra parameters:
+
+    -nn: Name Node URL, the address of the HDFS Name Node.
+    -kf: Key field name, the Parquet column name used to read the key.
+
+Example:
+
+    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
+
+If HDFS is enabled with Kerberos authentication, before starting the program, make sure that the current system login has been authenticated with Kerberos and has sufficient permissions to access HDFS. If not, you need to run the 'kinit' command for authentication, for example:
+
+    kinit sd@HADOOP.COM -k -t ~/sd.keytab
+
+Based on the test results of some internal datasets, the size of the generated compressed BSDB database files is about 70% of the size of the original Parquet files (compressed with gzip). Of course, a significant portion of the savings is due to the superior compression ratio of zstd compared to gzip. However, this also indicates that row-based databases, when using appropriate techniques and algorithms, may not necessarily have lower compression efficiency compared to columnar databases.
+
+##### Web Service Tool
+
+The system provides a simple HTTP query service based on Netty. Command:
+
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.HttpServer -d <root directory of the database file>
+
+Supported parameters:
+
+-    -A Specify the HTTP listen port, default to 0.0.0.0
+-    -p Specify the HTTP listen port, default to 9999
+-    -d Specify the data directory, default to ./rdb
+-    -P Specify the HTTP URI prefix, default to /bsdb/
+-    -t Specify the number of worker threads, default to the cpu count
+-    -a Approximate mode
+-    -ic Cache Index, the index will be fully loaded into memory. Preloading the full index(./rdb/index.db) into memory requires enough system memory (loaded as Off-heap memory, so no need to adjust Java's heap memory)
+-    -id Use direct IO to read index file, recommended when the index file is much larger than memory
+-    -kd Use direct IO to read KV files, recommended when kv.db is much larger than memory
+-    -async Use async mode to query the database
+-    -json Deserialize stored values as JSON output, only applicable to databases built using Parquet Builder
+
+Example:
+
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar ai.bsdb.HttpServer -d ./rdb -kd -id
+
+By default, you can query data using http://xxxx:9999/bsdb/<key>.
+
+##### API
+
+For performance considerations, BSDB currently provides query APIs as an embedded database:
+
+    import ai.bsdb.read.SyncReader;
+    
+    String dbPath = "./rdb";
+    SyncReader db = new SyncReader(new File(dbPath), false, false, true, true);
+    
+    byte[] key = "key1".getBytes();
+    byte[] value = db.getAsBytes(key);
+
+Async query API is also supported:
+
+    import ai.bsdb.read.AsyncReader;
+    
+    String dbPath = "./rdb";
+    AsyncReader db = new AsyncReader(new File(dbPath), false, true, true);
+    
+    byte[] key = "key1".getBytes();
+    db.asyncGet(key, null, new CompletionHandler<byte[], Object>() {
+        @Override
+        public void completed(byte[] value, Object object) {
+        logger.debug("query return {} for key:{}", Arrays.toString(value), Arrays.toString(key));
+        }
+    
+        @Override
+        public void failed(Throwable throwable, Object objects) {
+            logger.error("query failed", throwable);
+        }
+    });
+
+
+##### Performance Testing Tools
+
+The system provides several simple query performance testing tools that can be used to evaluate the performance of the database.
+###### Synchronous Query Performance Testing Tool
+
+Command:
+
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.QueryBench -d <database root directory> -k <text format kv file path> [-s <separator>] [-a] [-ic] [-id] [-kd] [-v]
+
+Supported parameters:
+
+-    -d Specify data directory, default to ./rdb
+-    -k Specify input file for loading query keys, the format is the same as the one used for building the database.
+-    -s Specify key/value separator, default to space " ".
+-    -a Approximate mode for queries.
+-    -ic Cache Index, the index will be loaded into memory. Sufficient memory is required to load ./rdb/index.db.
+-    -id Use direct IO to read the index. Recommended when the index file is much larger than memory.
+-    -kd Use direct IO to read the KV file. Recommended when kv.db is much larger than memory.
+-    -v Verify the consistency of the retrieved value with the input.
+
+In addition, it is necessary to adjust the concurrency of the JVM's Common ForkJoin Pool for database queries by using the flag -Djava.util.concurrent.ForkJoinPool.common.parallelism=<num>. In synchronous mode, a relatively high concurrency is usually required to fully utilize the performance of NVME SSD.
+
+Example:
+
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Djava.util.concurrent.ForkJoinPool.common.parallelism=320 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar  ai.bsdb.bench.QueryBench -id -kd -v -k ../100e_id
+
+###### Asynchronous Query Performance Testing Tool
+
+Command:
+
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.AsyncQueryBench -d <database root directory> -k <text format kv file path> [-s <separator>] [-a] [-id] [-kd] [-v]
+
+Supported parameters:
+
+-    -d Specify data directory, default to ./rdb
+-    -k Specify input file for sequential query keys, the format is the same as the one used for building the database.
+-    -s Specify key/value separator, default to space " ".
+-    -a Approximate mode for queries.
+-    -id Use direct IO to read the index. Recommended when the index file is much larger than memory.
+-    -kd Use direct IO to read the KV file. Recommended when kv.db is much larger than memory.
+-    -v Verify the consistency of the retrieved value with the input.
+
+It also supports the following system properties:
+
+-    bsdb.uring: Enable IO Uring. Disabled by default. Enabling IO Uring requires checking the kernel version and adjusting related limits, such as ulimit -n and limit -l.
+-    bsdb.reader.index.submit.threads: Number of concurrent threads for reading index files.
+-    bsdb.reader.kv.submit.threads: Number of concurrent threads for reading data files.
+-    java.util.concurrent.ForkJoinPool.common.parallelism: Number of concurrent threads in the system's Common ForkJoin Pool, used to control parallel reading of input files.
+
+Example:
+
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar    ai.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id
+
+###### Performance Test Results
+
+Test Environment: 
+
+    JD Cloud, Storage-Optimized IO Instance s.i3.4xlarge, with 16 CPU cores, 64GB memory, and 2 x 1862 NVMe SSDs.
+
+The allocated instance is running on this CPU model: Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz, 24 cores, 48 threads, with approximately 1/3 of the cores allocated to the instance.
+
+Using fio to test the disk randread performance, the io_uring and aio engines can achieve around 1300K IOPS with bs=4K, approximately 700K IOPS with bs=8K, and around 380K IOPS with bs=16K.
+
+The test dataset contains 13 billion records, with the following statistics:
+
+    kv.compressed = false
+    kv.compact = false
+    index.approximate = false
+    hash.checksum.bits = 4
+    kv.count = 13193787549
+    kv.key.len.max = 13
+    kv.key.len.avg = 13
+    kv.value.len.max = 36
+    kv.value.len.avg = 32
+
+BSDB synchronous query performance:
+
+|threads|16|32|48|64|80|96|112|128|144|160|176|192|208|224|240|256|272|286|302|318|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
+
+Synchronous queries require a higher level of concurrent threads to fully utilize disk IO. The maximum achievable QPS is close to 550,000, which is approaching but still below the limit of SSD IO performance (theoretical maximum of 1,300K IOPS divided by 2 IOPS per query, ideally reaching 650,000 QPS). If the server's CPU configuration were higher, there might be room for further QPS improvement.
+
+Enabling approximate mode in synchronous queries can achieve about 1 million QPS. In asynchronous query mode with IO Uring enabled, it can reach 500,000 QPS. Compared to synchronous mode, there is no absolute advantage in QPS, but it provides a better balance between CPU utilization and QPS.
+
+#### Notes
+
+-    JDK version 9-11 is supported, but higher versions like 17 are not currently supported.
+-    The operating system currently supports x86_64 Linux. If using IO Uring, the kernel version needs to be at least 5.1x.
+-    The input file's keys must not have duplicates and need to be deduplicated in advance.
+-    The Builder tool can run on traditional disks, but SSDs are required for online serving to achieve reasonable performance unless your datasets are small. Since each query requires two disk IOs, the QPS of the query is roughly equal to the disk's random read IOPS divided by 2. For example, with an SSD capable of 500,000 IOPS, in ideal conditions, it can achieve approximately 200,000 to 250,000 query QPS. In approximate indexing mode, only one disk IO operation is required, theoretically doubling the query performance. However, it is only suitable for limited scenarios (e.g., advertising), and there are also limitations on the size of the value (currently not exceeding 8 bytes, might be tunable in future).
+-    In compact mode, the disk space requirement is: record count x ((3 + checksum) / 8 + 8 + 2) + total key size + total value size.
+-    Heap memory requirement during build time: Perfect Hash resident memory is approximately: record count x ((3 + checksum) / 8) Bytes, plus some extra 2GB. In actual testing, building 5 billion records requires around 6GB of heap memory. Off-heap memory: cache size, specified by the ps parameter.
+-    Heap memory requirement during runtime: Perfect Hash resident memory is approximately: record count x ((3 + checksum) / 8) Bytes + extra 2GB. For example, with 2 billion records and a 4-bit checksum, it would be approximately 1.7GB.
+
+#### Future Plans
+
+-    Compression related optimization
+-    Better utilization of statistical information
+-    Reader API implemented in C or Rust
+-    Python support for the Reader API
+
+
+
+

@@ -87,16 +87,17 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 目前Builder工具的工作流程如下：
 
+- 对输入文件进行采样，收集K，V的一些统计信息，压缩率相关的信息，并生成共享压缩字典
 - 解析输入数据文件，构建BSDB数据文件，并保存所有的Key
 - 利用保存的Key构建完美Hash
 - 扫描BSDB数据文件，读取Key及KV记录的地址，查询完美Hash，构建索引文件
 
-第三步构建索引文件时，索引内容在内存中构建，构建完成后写入磁盘，从而规避随机IO，然构建过程在基于机械硬盘或者对象存储的环境中也可以高效完成。在数据库记录数很多，索引不能完全放在内存中的情况下，Builder工具通过多次扫描数据文件，每次构建一部分索引来解决，此时通过ps参数来设定每次构建索引的大小。
+第三步构建索引文件时，索引内容在内存中构建，构建完成后批量写入磁盘，从而规避随机IO，让构建过程在基于机械硬盘或者对象存储的环境中也可以高效完成。在数据库记录数很多，索引不能完全放在内存中的情况下，Builder工具通过多次扫描数据文件，每次构建一部分索引来解决，此时通过ps参数来设定每次构建索引时需要的off-heap内存的大小。
 
 #### 缓存
 目前BSDB内部没有提供任何缓存，这主要基于几个考虑：
 - 很多场景下查询输入的Key是完全随机的，且分布很散，缓存效率(命中/缓存大小)不高
-- 数据集不是特别大，或者系统内存资源很丰富，OS的页面缓存也很有效
+- 如果数据集不是特别大，或者系统内存资源很丰富，OS的页面缓存也很有效
 - 如果场景确有必要，应用层外挂一个缓存也是很成熟的方案
 - 缓存维护增加复杂性，也有性能开销
 
@@ -138,7 +139,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 系统也提供了读取HDFS文件系统上打Parquet文件来构建数据库的工具：
 命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] ai.bsdb.ParquetBuilder 
 
-除了普通Builder打参数，ParquetBuilder还需要指定以下参数：
+除了普通Builder的参数，ParquetBuilder还需要指定以下参数：
 - -nn Name Node url，HDFS Name Node的地址
 - -kf key field name，用于读取key的parquet column name
 
@@ -148,25 +149,30 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
     java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
 
 
-启动程序前，需要确保当前登录系统已经通过kerbros认证，有足够打权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如：
+如果HDFS启用了Kerbros认证，启动程序前，需要确保当前登录系统已经通过Kerbros认证，有足够的权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如：
 
     kinit sd@HADOOP.COM -k -t ~/sd.keytab
 
+根据部分内部数据集的测试结果，生成的压缩格式的BSDB数据库所有文件大小，大约是原始Parquet(gzip压缩)文件大小的70%，对存储成本的节省还是有比较好的效果; 当然这其中节省的部分应该有相当一部分是因为zstd相对gzip的压缩率优势，但这也表明行式数据库在使用合适的技巧和算法的情况下，不一定在压缩效率上就会比列式的差。
+
+
 ##### Web服务工具
-系统提供了一个简易的基于Netty的Web查询服务。
-命令： java -cp bsdb-jar-with-dependencies.jar ai.bsdb.HttpServer -d <数据库文件的根目录>
+系统提供了一个简易的基于Netty的Web查询服务。 命令： 
+    
+    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.HttpServer -d <数据库文件的根目录>
+
 支持的参数：
--A Specify http listen port, default to 0.0.0.0
--p Specify http listen port, default to 9999
--d Specify data directory, default to ./rdb
--P Specify http uri prefix, default to /bsdb/
--t Specify worker thread number, default to processor count
--a Approximate mode,模糊查询模式
--ic Cache Index,index will be loaded to memory.Must have sufficient memory to load ./rdb/index.db，预加载全量索引到内存，需要确保系统有足够的内存(加载使Off-heap memory，因此不需要调整java的heap memory)
--id Use direct IO to read index, 使用direct IO模式读取索引，在索引文件远大于内存时建议开启
--kd Use direct IO to read KV file, 使用direct IO模式读取KV记录，在kv.db远大于内存时建议开启
--async Use async mode to query db,使用异步模式访问数据库
--json Deserialize stored values as json output, 将value转化为JSON格式输出，只适用于利用parquet文件构建的数据库
+- -A Specify http listen port, default to 0.0.0.0
+- -p Specify http listen port, default to 9999
+- -d Specify data directory, default to ./rdb
+- -P Specify http uri prefix, default to /bsdb/
+- -t Specify worker thread number, default to processor count
+- -a Approximate mode,模糊查询模式
+- -ic Cache Index,index will be loaded to memory.Must have sufficient memory to load ./rdb/index.db，预加载全量索引到内存，需要确保系统有足够的内存(加载使Off-heap memory，因此不需要调整java的heap memory)
+- -id Use direct IO to read index, 使用direct IO模式读取索引，在索引文件远大于内存时建议开启
+- -kd Use direct IO to read KV file, 使用direct IO模式读取KV记录，在kv.db远大于内存时建议开启
+- -async Use async mode to query db,使用异步模式访问数据库
+- -json Deserialize stored values as json output, 将value转化为JSON格式输出，只适用于利用parquet文件构建的数据库
   
 样例：
 
@@ -180,7 +186,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
     import ai.bsdb.read.SyncReader;
 
-    String dbPath = ".";
+    String dbPath = "./rdb";
     SyncReader db = new SyncReader(new File(dbPath), false, false, true, true);
 
     byte[] key = "key1".getBytes();
@@ -190,7 +196,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
     import ai.bsdb.read.AsyncReader;
 
-    String dbPath = ".";
+    String dbPath = "./rdb";
     AsyncReader db = new AsyncReader(new File(dbPath), false, true, true);
 
     byte[] key = "key1".getBytes();
@@ -284,6 +290,8 @@ BSDB同步查询性能：
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 |qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
 
+同步查询需要较大的并发线程才可以充分利用磁盘IO，最高可以接近55万qps，接近但应该还没有达到SSD IO性能的极限(理论上每次查询2次IO，理想情况下应该能做到1300K iops/ 2 iops = 650K qps); 要是服务器的CPU配置再高一些，可能qps还有一定提升的空间。
+
 同步查询启用模糊索引，可以达到100万qps; 异步查询模式下启用IO Uring，可以达到50万qps，相比同步模式qps没有绝对优势，不过更易于在CPU利用率和qps间平衡。 
 
 #### 注意事项
@@ -298,5 +306,6 @@ BSDB同步查询性能：
 #### 后续计划
 
 - 压缩相关的优化
+- 更好的利用数据集的统计信息
 - 基于C或Rust实现的Reader API
 - Reader API的Python支持
