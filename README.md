@@ -15,7 +15,7 @@ A read-only database only supports query operations online and does not support 
 
 #### What are the advantages of a read-only database?
 
-- cheap. During construction, disk IO can be fully optimized as large block sequential writes, which runs well with low-cost HDD or OSS; it is also very friendly to SSD writes, with near-zero write amplification, which is beneficial to optimize SSD lifetime, and using cheap consumer-grade SSD might be a reasonable choice in some case.
+- Cheap. During construction, disk IO can be fully optimized as large block sequential writes, which runs well with low-cost HDD or OSS; it is also very friendly to SSD writes, with near-zero write amplification, which is beneficial to optimize SSD lifetime, and using cheap consumer-grade SSD might be a reasonable choice in some case.
 - Simple and reliable. No need to support for transactions/locks/logs/intra-instance communications, making the online serving logic very simple. The data is read-only during online, so there is no concern about data integrity being compromised.
 - High performance. During the build phase, the full set of data can be accessed, allowing for the optimization of data organization based on the information available to facilitate queries.
 - Low latency. The short read path and the lack of IO interference help to maintain high throughput and stable latency.
@@ -24,9 +24,9 @@ A read-only database only supports query operations online and does not support 
 #### Matching Scenarios
 
 - The number of records in the data set is very large (billions), or the data set is very large (several TB), do not expect to pay too much cost on server memory but high IOPS SSD costs can be affordable (SSD is still much cheaper than memory). 
-- Large datasets with query performance requirements (can not support by HDD), expect the database compression ratio is higher to save the storage cost (SSD is still expensive relatively).
-- updates of the data set does not must be seen by queried immediately, can serve queries via a batch updated historical snapshot version
-- updates usually impact large number of records
+- Large datasets with high query performance(throughput or latency) required (can not serve on HDD), expect the database compression ratio to be higher to save the storage cost (SSD is still expensive relatively).
+- Updates of the dataset does not must be seen by queries immediately, so queries could be served via a batch updated historical snapshot version
+- Updates usually impact large amount of records, which is painful for most well-known databases
 - Expect to achieve very high query throughput (tens of thousand to millions of qps) with minimal latency (sub-millisecond) or very predictable latency at the lowest possible cost.
 
 #### Unique Features
