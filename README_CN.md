@@ -108,7 +108,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 ##### 数据库构建工具
 目前自带构建工具仅支持类似csv的文本输入，每行一个记录，记录格式为 <key><分隔符><value>。文件支持gz或者zstd压缩，压缩时文件名需要以.gz/.zstd结尾。其他格式的输入，可以参考Builder源码自行编写构建程序。
 
-命令：java -cp bsdb-jar-with-dependencies.jar ai.bsdb.Builder -i <文本格式kv文件路径>
+命令：java -cp bsdb-jar-with-dependencies.jar tech.bsdb.Builder -i <文本格式kv文件路径>
 
 支持的参数：
 
@@ -128,7 +128,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 样例：
 
-    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies-0.1.2.jar   ai.bsdb.Builder -i ./kv.txt.zstd -ps 8192  
+    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies-0.1.2.jar   tech.bsdb.Builder -i ./kv.txt.zstd -ps 8192  
 
 说明：
 - -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 用于控制写入数据的并发数量，建议设置为CPU的逻辑核心数量，以保证构建时可以充分利用CPU
@@ -137,7 +137,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 ###### Parquet Builder
 系统也提供了读取HDFS文件系统上打Parquet文件来构建数据库的工具：
-命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] ai.bsdb.ParquetBuilder 
+命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] tech.bsdb.ParquetBuilder 
 
 除了普通Builder的参数，ParquetBuilder还需要指定以下参数：
 - -nn Name Node url，HDFS Name Node的地址
@@ -146,7 +146,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 样例：
 
 
-    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
+    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: tech.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
 
 
 如果HDFS启用了Kerbros认证，启动程序前，需要确保当前登录系统已经通过Kerbros认证，有足够的权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如：
@@ -159,7 +159,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 ##### Web服务工具
 系统提供了一个简易的基于Netty的Web查询服务。 命令： 
     
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.HttpServer -d <数据库文件的根目录>
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.HttpServer -d <数据库文件的根目录>
 
 支持的参数：
 - -A Specify http listen port, default to 0.0.0.0
@@ -176,15 +176,23 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
   
 样例：
 
-    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar ai.bsdb.HttpServer -d ./rdb -kd -id    
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.HttpServer -d ./rdb -kd -id    
 
 
 缺省情况下可以通过 http://xxxx:9999/bsdb/<key>来查询数据。
 
 ##### API
+配置依赖：
+
+    <dependency>
+      <groupId>tech.bsdb</groupId>
+      <artifactId>bsdb-core</artifactId>
+      <version>0.1.2</version>
+    </dependency>
+
 基于性能考虑，目前BSDB提供作为内嵌数据库的查询API。
 
-    import ai.bsdb.read.SyncReader;
+    import tech.bsdb.read.SyncReader;
 
     String dbPath = "./rdb";
     SyncReader db = new SyncReader(new File(dbPath), false, false, true, true);
@@ -194,7 +202,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 同时也提供了对异步查询的支持：
 
-    import ai.bsdb.read.AsyncReader;
+    import tech.bsdb.read.AsyncReader;
 
     String dbPath = "./rdb";
     AsyncReader db = new AsyncReader(new File(dbPath), false, true, true);
@@ -219,7 +227,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 ###### 同步查询性能测试工具
 命令：
 
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.QueryBench -d <数据库文件的根目录> -k <文本格式kv文件路径> [-s <separator>] [-a] [-ic] [-id] [-kd] [-v]
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.bench.QueryBench -d <数据库文件的根目录> -k <文本格式kv文件路径> [-s <separator>] [-a] [-ic] [-id] [-kd] [-v]
 
 支持的参数：
 
@@ -236,12 +244,12 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 样例：
 
-    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G  -Djava.util.concurrent.ForkJoinPool.common.parallelism=320 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar  ai.bsdb.bench.QueryBench -id -kd -v -k ../100e_id 
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G  -Djava.util.concurrent.ForkJoinPool.common.parallelism=320 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar  tech.bsdb.bench.QueryBench -id -kd -v -k ../100e_id 
 
 ###### 异步查询性能测试工具
 命令：
 
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.AsyncQueryBench -d <数据库文件的根目录> -k <文本格式kv文件路径> [-s <separator>] [-a] [-id] [-kd] [-v]
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.bench.AsyncQueryBench -d <数据库文件的根目录> -k <文本格式kv文件路径> [-s <separator>] [-a] [-id] [-kd] [-v]
 
 支持的参数：
 
@@ -262,7 +270,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 样例：
 
-    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar    ai.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id 
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar    tech.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id 
 
 
 ###### 性能测试结果

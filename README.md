@@ -11,7 +11,7 @@ A read-only database only supports query operations online and does not support 
 
 - One traditional scenario is the need for pre-built dictionary data that shipped with system/software releases. These data may only need to be updated when the system/software is upgraded.
 
-- More recently scenarios are: big data systems need to serve data query APIs after data mining/processing, e.g. user profiling/feature engineering/ID mapping. The data supporting these query APIs usually are updated in batches on a scheduled basis, but each update involves replacing a large number of records, approaching a full replacement of the entire database/table. As an online data query service, it often needs to support a high query rate per second (QPS) while ensuring low and predictable query response times. When using traditional KV databases to support this scenario, one common problem encountered is the difficulty of guaranteeing the SLA of the query service during batch updates. Another common problem is that it usually requires configuring/maintaining expensive database clusters to support the SLA of the query service.
+- More recently scenarios are: big data systems need to serve data query APIs after data mining/processing, e.g. user profiling/feature engineering/embeddings/ID mapping. The data supporting these query APIs usually are updated in batches on a scheduled basis, but each update involves replacing a large number of records, approaching a full replacement of the entire database/table. As an online data query service, it often needs to support a high query rate per second (QPS) while ensuring low and predictable query response times. When using traditional KV databases to support this scenario, one common problem encountered is the difficulty of guaranteeing the SLA of the query service during batch updates. Another common problem is that it usually requires configuring/maintaining expensive database clusters to support the SLA of the query service.
 
 #### What are the advantages of a read-only database?
 
@@ -119,7 +119,7 @@ The built-in Builder tool currently supports text input formats similar to CSV, 
 
 Command: 
 
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.Builder -i <text_format_kv_file_path>
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.Builder -i <text_format_kv_file_path>
 
 Supported parameters:
 
@@ -138,7 +138,7 @@ Supported parameters:
 
 Example:
 
-    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp bsdb-jar-with-dependencies-0.1.2.jar ai.bsdb.Builder -i ./kv.txt.zstd -ps 8192
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.Builder -i ./kv.txt.zstd -ps 8192
 
 Note:
 
@@ -151,7 +151,7 @@ BSDB also provides a tool to build a database by reading Parquet files on the HD
 
 Command: 
 
-    java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] ai.bsdb.ParquetBuilder
+    java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] tech.bsdb.ParquetBuilder
 
 In addition to the parameters of the regular Builder, ParquetBuilder requires the following extra parameters:
 
@@ -160,7 +160,7 @@ In addition to the parameters of the regular Builder, ParquetBuilder requires th
 
 Example:
 
-    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: ai.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
+    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: tech.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
 
 If HDFS is enabled with Kerberos authentication, before starting the program, make sure that the current system login has been authenticated with Kerberos and has sufficient permissions to access HDFS. If not, you need to run the 'kinit' command for authentication, for example:
 
@@ -172,7 +172,7 @@ Based on the test results of some internal datasets, the size of the generated c
 
 The system provides a simple HTTP query service based on Netty. Command:
 
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.HttpServer -d <root directory of the database file>
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.HttpServer -d <root directory of the database file>
 
 Supported parameters:
 
@@ -190,15 +190,23 @@ Supported parameters:
 
 Example:
 
-    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar ai.bsdb.HttpServer -d ./rdb -kd -id
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.HttpServer -d ./rdb -kd -id
 
 By default, you can query data using http://xxxx:9999/bsdb/<key>.
 
 ##### API
 
+Maven dependency：
+
+    <dependency>
+      <groupId>tech.bsdb</groupId>
+      <artifactId>bsdb-core</artifactId>
+      <version>0.1.2</version>
+    </dependency>
+
 For performance considerations, BSDB currently provides query APIs as an embedded database:
 
-    import ai.bsdb.read.SyncReader;
+    import tech.bsdb.read.SyncReader;
     
     String dbPath = "./rdb";
     SyncReader db = new SyncReader(new File(dbPath), false, false, true, true);
@@ -208,7 +216,7 @@ For performance considerations, BSDB currently provides query APIs as an embedde
 
 Async query API is also supported:
 
-    import ai.bsdb.read.AsyncReader;
+    import tech.bsdb.read.AsyncReader;
     
     String dbPath = "./rdb";
     AsyncReader db = new AsyncReader(new File(dbPath), false, true, true);
@@ -234,7 +242,7 @@ The system provides several simple query performance testing tools that can be u
 
 Command:
 
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.QueryBench -d <database root directory> -k <text format kv file path> [-s <separator>] [-a] [-ic] [-id] [-kd] [-v]
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.bench.QueryBench -d <database root directory> -k <text format kv file path> [-s <separator>] [-a] [-ic] [-id] [-kd] [-v]
 
 Supported parameters:
 
@@ -251,13 +259,13 @@ In addition, it is necessary to adjust the concurrency of the JVM's Common ForkJ
 
 Example:
 
-    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Djava.util.concurrent.ForkJoinPool.common.parallelism=320 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar  ai.bsdb.bench.QueryBench -id -kd -v -k ../100e_id
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Djava.util.concurrent.ForkJoinPool.common.parallelism=320 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar  tech.bsdb.bench.QueryBench -id -kd -v -k ../100e_id
 
 ###### Asynchronous Query Performance Testing Tool
 
 Command:
 
-    java -cp bsdb-jar-with-dependencies.jar ai.bsdb.bench.AsyncQueryBench -d <database root directory> -k <text format kv file path> [-s <separator>] [-a] [-id] [-kd] [-v]
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.bench.AsyncQueryBench -d <database root directory> -k <text format kv file path> [-s <separator>] [-a] [-id] [-kd] [-v]
 
 Supported parameters:
 
@@ -278,7 +286,7 @@ It also supports the following system properties:
 
 Example:
 
-    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar    ai.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id
+    /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id
 
 ###### Performance Test Results
 

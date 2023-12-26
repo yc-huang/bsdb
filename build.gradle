@@ -3,9 +3,11 @@ plugins {
     id 'c'
     id 'maven'
     id 'maven-publish'
+    id 'signing'
 }
 
-group 'ai.bsdb.core'
+group 'tech.bsdb'
+archivesBaseName = "bsdb-core"
 version '0.1.2'
 
 sourceCompatibility = 1.9
@@ -20,6 +22,13 @@ compileTestJava {
     options.deprecation = false
     options.compilerArgs += ["-Xdoclint:none", "-Xlint:none", "-nowarn", "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"]
 }
+javadoc {
+    //options.JFlags += ["--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"]
+    exclude "tech/bsdb/io/*"
+    exclude "com/*"
+    exclude "it/*"
+
+}
 
 tasks.withType(JavaCompile) {
     println 'Compiler args: ' + options.compilerArgs
@@ -33,7 +42,9 @@ repositories {
 dependencies {
     testCompile group: 'junit', name: 'junit', version: '4.13.1'
 
-    implementation group: 'org.xerial.larray', name: 'larray_2.12', version: '0.4.0'
+    implementation (group: 'org.xerial.larray', name: 'larray_2.12', version: '0.4.0'){
+        exclude group: 'ch.qos.logback'
+    }
     implementation 'org.xerial.larray:larray-mmap:0.4.1'
 
     implementation 'com.conversantmedia:disruptor:1.2.16'
@@ -54,7 +65,7 @@ dependencies {
 
     implementation 'org.msgpack:msgpack-core:0.9.6'
 
-    implementation 'com.google.guava:guava:31.1-jre'
+    implementation 'com.google.guava:guava:32.0.0-jre'
     implementation group: 'org.slf4j', name: 'slf4j-simple', version: '2.0.3'
 
 }
@@ -75,9 +86,17 @@ task sourcesJar(type: Jar, dependsOn: classes) {
     classifier = 'sources'
     from sourceSets.main.allSource
 }
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc
+}
 
 artifacts {
-    archives sourcesJar
+    archives javadocJar, sourcesJar
+}
+
+signing {
+    sign configurations.archives
 }
 
 
@@ -85,7 +104,7 @@ model {
     buildTypes {
         release
     }
-    
+
     binaries {
         all {
             if (toolChain in Gcc) {
@@ -147,23 +166,45 @@ task customFatJar(type: Jar) {
     with jar
 }
 
-publishing {
-    publications {
-        maven(MavenPublication) {
-            groupId = 'ai.bsdb'
-            artifactId = 'bsdb-core'
-            version = '0.1.2'
-
-            from components.java
-        }
-    }
+uploadArchives {
     repositories {
-        maven {
-            name = "OSSRH"
-            url = "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
-            credentials {
-                username = System.getenv("MAVEN_USERNAME")
-                password = System.getenv("MAVEN_PASSWORD")
+        mavenDeployer {
+            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+            repository(url: "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/") {
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            snapshotRepository(url: "https://s01.oss.sonatype.org/content/repositories/snapshots/") {
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            pom.project {
+                name 'tech.bsdb:bsdb-core'
+                packaging 'jar'
+                // optionally artifactId can be defined here
+                description 'A build&serve style readonly KV store'
+                url 'https://github.com/yc-huang/bsdb'
+                scm {
+                    connection 'scm:git:git://github.com/yc-huang/bsdb.git'
+                    developerConnection 'scm:git:ssh://github.com/yc-huang/bsdb.git'
+                    url 'http://github.com/yc-huang/bsdb/tree/master'
+                }
+
+                licenses {
+                    license {
+                        name 'The Apache License, Version 2.0'
+                        url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id 'YC'
+                        name 'YC Huang'
+                        email 'ychuang.cn@gmail.com'
+                    }
+                }
             }
         }
     }
