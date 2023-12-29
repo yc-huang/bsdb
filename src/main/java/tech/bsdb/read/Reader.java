@@ -2,6 +2,7 @@ package tech.bsdb.read;
 
 import it.unimi.dsi.fastutil.io.BinIO;
 import it.unimi.dsi.sux4j.mph.GOVMinimalPerfectHashFunction;
+import it.unimi.dsi.sux4j.mph.GOVMinimalPerfectHashFunctionModified;
 import org.apache.commons.configuration2.Configuration;
 import org.apache.commons.configuration2.builder.fluent.Configurations;
 import org.apache.commons.configuration2.ex.ConfigurationException;
@@ -21,12 +22,12 @@ public abstract class Reader {
     protected File kvFile;
     protected long idxCapacity;
     protected boolean approximateMode;
-    protected GOVMinimalPerfectHashFunction<byte[]> hashFunction;
+    protected GOVMinimalPerfectHashFunctionModified<byte[]> hashFunction;
     private Configuration config;
     private Field[] valueSchema;
 
     public Reader(File basePath, boolean approximate) throws IOException, ClassNotFoundException {
-        this.hashFunction = (GOVMinimalPerfectHashFunction<byte[]>) BinIO.loadObject(new File(basePath, Common.FILE_NAME_KEY_HASH));
+        this.hashFunction = (GOVMinimalPerfectHashFunctionModified<byte[]>) BinIO.loadObject(new File(basePath, Common.FILE_NAME_KEY_HASH));
         this.approximateMode = approximate;
         this.idxFile = new File(basePath, approximate ? Common.FILE_NAME_KV_APPROXIMATE_INDEX : Common.FILE_NAME_KV_INDEX);
         this.kvFile = new File(basePath, Common.FILE_NAME_KV_DATA);
