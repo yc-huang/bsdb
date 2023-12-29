@@ -47,7 +47,7 @@ public class UringAsyncFileReaderTest extends TestCase {
     }
 
     private void testRead(int size) throws InterruptedException, IOException {
-        UringAsyncFileReader reader = new UringAsyncFileReader(size, 1, 1, "");
+        UringAsyncFileReader reader = new UringAsyncFileReader(size, 1, "");
         reader.start();
         long len = new File(file).length();
         AtomicLong submit = new AtomicLong();
