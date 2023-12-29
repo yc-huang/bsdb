@@ -1,5 +1,6 @@
 package tech.bsdb.tools;
 
+import it.unimi.dsi.fastutil.io.BinIO;
 import tech.bsdb.read.SyncReader;
 import tech.bsdb.serde.Field;
 import tech.bsdb.serde.ParquetSer;
@@ -121,9 +122,7 @@ public class ParquetBuilder {
         ParquetSer parquetReader = new ParquetSer();
         //save parquet file schema
         Field[] schema = parquetReader.getSchema(files.get(0), keyFieldName);
-        try (FileOutputStream fos = new FileOutputStream(new File(outPath, Common.FILE_NAME_VALUE_SCHEMA)); ObjectOutputStream oos = new ObjectOutputStream(fos);) {
-            oos.writeObject(schema);
-        }
+        BinIO.storeObject(schema, new File(outPath, Common.FILE_NAME_VALUE_SCHEMA));
 
         int sampledFiles = Math.min(8, files.size()); //no need to sample too much files
         sampleCount /= sampledFiles;

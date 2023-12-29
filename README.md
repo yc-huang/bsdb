@@ -138,7 +138,7 @@ Supported parameters:
 
 Example:
 
-    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.Builder -i ./kv.txt.zstd -ps 8192
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.tools.Builder -i ./kv.txt.zstd -ps 8192
 
 Note:
 
@@ -160,7 +160,7 @@ In addition to the parameters of the regular Builder, ParquetBuilder requires th
 
 Example:
 
-    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: tech.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
+    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: tech.bsdb.tools.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
 
 If HDFS is enabled with Kerberos authentication, before starting the program, make sure that the current system login has been authenticated with Kerberos and has sufficient permissions to access HDFS. If not, you need to run the 'kinit' command for authentication, for example:
 
@@ -190,7 +190,7 @@ Supported parameters:
 
 Example:
 
-    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.HttpServer -d ./rdb -kd -id
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.tools.HttpServer -d ./rdb -kd -id
 
 By default, you can query data using http://xxxx:9999/bsdb/<key>.
 
@@ -323,7 +323,7 @@ Enabling approximate mode in synchronous queries can achieve about 1 million QPS
 #### Notes
 
 -    JDK version 9-11 is supported, but higher versions like 17 are not currently supported.
--    The operating system currently supports x86_64 Linux. If using IO Uring, the kernel version needs to be at least 5.1x.
+-    The operating system currently supports x86_64 Linux. If using IO Uring, the kernel version needs to be at least 5.1x, and you need to install liburing.so to your system (check https://github.com/axboe/liburing). 
 -    The input file's keys must not have duplicates and need to be deduplicated in advance.
 -    The Builder tool can run on traditional disks, but SSDs are required for online serving to achieve reasonable performance unless your datasets are small. Since each query requires two disk IOs, the QPS of the query is roughly equal to the disk's random read IOPS divided by 2. For example, with an SSD capable of 500,000 IOPS, in ideal conditions, it can achieve approximately 200,000 to 250,000 query QPS. In approximate indexing mode, only one disk IO operation is required, theoretically doubling the query performance. However, it is only suitable for limited scenarios (e.g., advertising), and there are also limitations on the size of the value (currently not exceeding 8 bytes, might be tunable in future).
 -    In compact mode, the disk space requirement is: record count x ((3 + checksum) / 8 + 8 + 2) + total key size + total value size.
