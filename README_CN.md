@@ -128,7 +128,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 样例：
 
-    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies-0.1.2.jar   tech.bsdb.Builder -i ./kv.txt.zstd -ps 8192  
+    java -ms4096m -mx4096m -verbose:gc   --illegal-access=permit   --add-exports java.base/jdk.internal.ref=ALL-UNNAMED  --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  -Djava.util.concurrent.ForkJoinPool.common.parallelism=16   -Dit.unimi.dsi.sux4j.mph.threads=16   -cp bsdb-jar-with-dependencies-0.1.2.jar   tech.bsdb.tools.Builder -i ./kv.txt.zstd -ps 8192  
 
 说明：
 - -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 用于控制写入数据的并发数量，建议设置为CPU的逻辑核心数量，以保证构建时可以充分利用CPU
@@ -146,7 +146,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 样例：
 
 
-    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: tech.bsdb.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
+    java -ms8g -mx16g -XX:MaxDirectMemorySize=40g  --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Djava.util.concurrent.ForkJoinPool.common.parallelism=16 -Dit.unimi.dsi.sux4j.mph.threads=16 -cp ../bsdb-jar-with-dependencies-0.1.2.jar:/usr/local/apache/hadoop/latest/etc/hadoop:/usr/local/apache/hadoop/latest/share/hadoop/common/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/common/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/hdfs/*:/usr/local/apache/hadoop/latest/share/hadoop/mapreduce/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/lib/*:/usr/local/apache/hadoop/latest/share/hadoop/yarn/*: tech.bsdb.tools.ParquetBuilder  -ps 30000 -z -bs 8192 -nn hdfs://xxxx:9800 -i  /xxx/data/all/2023/09/idfa_new_tags/ -ds 2 -sc 100000  -kf did_md5  -temp /data/tmp  
 
 
 如果HDFS启用了Kerbros认证，启动程序前，需要确保当前登录系统已经通过Kerbros认证，有足够的权限访问HDFS。要是没有，需要运行kinit命令来进行认证，例如：
@@ -176,7 +176,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
   
 样例：
 
-    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.HttpServer -d ./rdb -kd -id    
+    java -ms4096m -mx4096m -verbose:gc --illegal-access=permit --add-exports java.base jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.tools.HttpServer -d ./rdb -kd -id    
 
 
 缺省情况下可以通过 http://xxxx:9999/bsdb/<key>来查询数据。
@@ -304,7 +304,7 @@ BSDB同步查询性能：
 
 #### 注意事项
 - JDK版本支持9-11，暂不支持17等更高版本
-- 操作系统目前支持x86_64 Linux，若使用IO Uring，需要kernel版本至少5.1x.
+- 操作系统目前支持x86_64 Linux，若使用IO Uring，需要kernel版本至少5.1x, 并且需要手工安装liburing(https://github.com/axboe/liburing)
 - 输入文件中的key不可以有重复,需要预先排重
 - 构建工具可以基于传统磁盘运行，提供在线服务的时候需要SSD。由于每次查询需要两次磁盘IO，所以查询的qps大体等于磁盘随机IOPS/2，比如一个50万IOPS能力的SSD，理想情况下能达到接近20-25万查询QPS.模糊索引模式下只需要一次磁盘IO，理论上查询性能可以翻倍，不过只适用于部分对于查询结果可以容忍一定比例错误的场景（比如广告），并且Value的大小也有限制(目前是不超过8 Bytes)
 - 紧凑模式下磁盘空间需求：记录数 x ((3+checksum) / 8 + 8 + 2) + key总大小×2 + value总大小
