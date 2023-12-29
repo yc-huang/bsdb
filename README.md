@@ -119,7 +119,7 @@ The built-in Builder tool currently supports text input formats similar to CSV, 
 
 Command: 
 
-    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.Builder -i <text_format_kv_file_path>
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.tools.Builder -i <text_format_kv_file_path>
 
 Supported parameters:
 
@@ -151,7 +151,7 @@ BSDB also provides a tool to build a database by reading Parquet files on the HD
 
 Command: 
 
-    java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] tech.bsdb.ParquetBuilder
+    java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] tech.bsdb.tools.ParquetBuilder
 
 In addition to the parameters of the regular Builder, ParquetBuilder requires the following extra parameters:
 
@@ -172,7 +172,7 @@ Based on the test results of some internal datasets, the size of the generated c
 
 The system provides a simple HTTP query service based on Netty. Command:
 
-    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.HttpServer -d <root directory of the database file>
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.tools.HttpServer -d <root directory of the database file>
 
 Supported parameters:
 
