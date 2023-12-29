@@ -108,7 +108,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 ##### 数据库构建工具
 目前自带构建工具仅支持类似csv的文本输入，每行一个记录，记录格式为 <key><分隔符><value>。文件支持gz或者zstd压缩，压缩时文件名需要以.gz/.zstd结尾。其他格式的输入，可以参考Builder源码自行编写构建程序。
 
-命令：java -cp bsdb-jar-with-dependencies.jar tech.bsdb.Builder -i <文本格式kv文件路径>
+命令：java -cp bsdb-jar-with-dependencies.jar tech.bsdb.tools.Builder -i <文本格式kv文件路径>
 
 支持的参数：
 
@@ -137,7 +137,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 ###### Parquet Builder
 系统也提供了读取HDFS文件系统上打Parquet文件来构建数据库的工具：
-命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] tech.bsdb.ParquetBuilder 
+命令： java -cp bsdb-jar-with-dependencies.jar:[hadoop jars] tech.bsdb.tools.ParquetBuilder 
 
 除了普通Builder的参数，ParquetBuilder还需要指定以下参数：
 - -nn Name Node url，HDFS Name Node的地址
@@ -159,7 +159,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 ##### Web服务工具
 系统提供了一个简易的基于Netty的Web查询服务。 命令： 
     
-    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.HttpServer -d <数据库文件的根目录>
+    java -cp bsdb-jar-with-dependencies.jar tech.bsdb.tools.HttpServer -d <数据库文件的根目录>
 
 支持的参数：
 - -A Specify http listen port, default to 0.0.0.0
