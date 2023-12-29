@@ -1,5 +1,6 @@
 package tech.bsdb.read;
 
+import org.apache.commons.configuration2.Configuration;
 import tech.bsdb.read.index.AsyncDirectIndexReader;
 import tech.bsdb.read.index.AsyncIndexReader;
 import tech.bsdb.read.index.AsyncLBufferIndexReader;
@@ -28,37 +29,20 @@ public class AsyncReader extends Reader {
     Logger logger = LoggerFactory.getLogger(AsyncReader.class);
 
     public AsyncReader(File basePath, boolean approximate, boolean indexReadDirect, boolean kvReadDirect) throws IOException, ClassNotFoundException {
-        this.hashFunction = (GOVMinimalPerfectHashFunction<byte[]>) BinIO.loadObject(new File(basePath, Common.FILE_NAME_KEY_HASH));
+        super(basePath, approximate);
 
         boolean useUring = Boolean.getBoolean("bsdb.uring");
         int submitThreads = Common.getPropertyAsInt("bsdb.reader.index.submit.threads", Math.max(Common.CPUS / 2, 2));
         //int callbackThreads = Common.getPropertyAsInt("bsdb.reader.index.callback.threads", 1);
 
-        File idxFile = new File(basePath, approximate ? Common.FILE_NAME_KV_APPROXIMATE_INDEX : Common.FILE_NAME_KV_INDEX);
         this.idxReader = indexReadDirect ? new AsyncDirectIndexReader(idxFile, submitThreads, useUring) : new AsyncLBufferIndexReader(idxFile);
         this.idxCapacity = idxReader.size();
         logger.info("idx capacity:{}", idxCapacity);
-        this.approximateMode = approximate;
-
-        try {
-            config = new Configurations().properties(new File(basePath, Common.FILE_NAME_CONFIG));
-        } catch (ConfigurationException e) {
-            throw new RuntimeException(e);
-        }
-
-        File schemaFile = new File(basePath, Common.FILE_NAME_VALUE_SCHEMA);
-        if (schemaFile.exists()) {
-            try (ObjectInputStream ois = new ObjectInputStream(Files.newInputStream(schemaFile.toPath()))) {
-                valueSchema = (Field[]) ois.readObject();
-            }
-        }
 
         if (!approximate) {
-            File kvFile = new File(basePath, Common.FILE_NAME_KV_DATA);
-            boolean compress = config.getBoolean(Common.CONFIG_KEY_KV_COMPRESS);
-            boolean compact = config.getBoolean(Common.CONFIG_KEY_KV_COMPACT);
-            this.kvReader = compress ? new CompressedKVReader(kvFile, config, true, kvReadDirect)
-                    : compact ? new CompactKVReader(kvFile, config, true, kvReadDirect) : new BlockedKVReader(kvFile, config, true, kvReadDirect);
+            Configuration config = getConfig();
+            this.kvReader = isCompressed() ? new CompressedKVReader(kvFile, config, true, kvReadDirect)
+                    : isCompact() ? new CompactKVReader(kvFile, config, true, kvReadDirect) : new BlockedKVReader(kvFile, config, true, kvReadDirect);
         }
     }
 

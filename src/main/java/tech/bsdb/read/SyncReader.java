@@ -1,5 +1,6 @@
 package tech.bsdb.read;
 
+import org.apache.commons.configuration2.Configuration;
 import tech.bsdb.read.index.DirectIndexReader;
 import tech.bsdb.read.index.IndexReader;
 import tech.bsdb.read.index.LBufferIndexReader;
@@ -27,32 +28,16 @@ public class SyncReader extends Reader {
     Logger logger = LoggerFactory.getLogger(SyncReader.class);
 
     public SyncReader(File basePath, boolean loadIndex2Mem, boolean approximate, boolean indexReadDirect, boolean kvReadDirect) throws IOException, ClassNotFoundException {
-        this.hashFunction = (GOVMinimalPerfectHashFunction<byte[]>) BinIO.loadObject(new File(basePath, Common.FILE_NAME_KEY_HASH));
-        File idxFile = new File(basePath, approximate ? Common.FILE_NAME_KV_APPROXIMATE_INDEX : Common.FILE_NAME_KV_INDEX);
+        super(basePath, approximate);
+
         this.idxReader = indexReadDirect ? new DirectIndexReader(idxFile) : new LBufferIndexReader(idxFile, loadIndex2Mem);
         this.idxCapacity = idxReader.size();
         logger.info("idx capacity:{}", idxCapacity);
-        this.approximateMode = approximate;
-
-        try {
-            config = new Configurations().properties(new File(basePath, Common.FILE_NAME_CONFIG));
-        } catch (ConfigurationException e) {
-            throw new RuntimeException(e);
-        }
-
-        File schemaFile = new File(basePath, Common.FILE_NAME_VALUE_SCHEMA);
-        if (schemaFile.exists()) {
-            try (ObjectInputStream ois = new ObjectInputStream(Files.newInputStream(schemaFile.toPath()))) {
-                valueSchema = (Field[]) ois.readObject();
-            }
-        }
 
         if (!approximate) {
-            File kvFile = new File(basePath, Common.FILE_NAME_KV_DATA);
-            boolean compress = config.getBoolean(Common.CONFIG_KEY_KV_COMPRESS);
-            boolean compact = config.getBoolean(Common.CONFIG_KEY_KV_COMPACT);
-            this.kvReader = compress ? new CompressedKVReader(kvFile, config, false, kvReadDirect)
-                    : compact ? new CompactKVReader(kvFile, config, false, kvReadDirect) : new BlockedKVReader(kvFile, config, false, kvReadDirect);
+            Configuration config = getConfig();
+            this.kvReader = isCompressed() ? new CompressedKVReader(kvFile, config, false, kvReadDirect)
+                    : isCompact() ? new CompactKVReader(kvFile, config, false, kvReadDirect) : new BlockedKVReader(kvFile, config, false, kvReadDirect);
         }
     }
 
