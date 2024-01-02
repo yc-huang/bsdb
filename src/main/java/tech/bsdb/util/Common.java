@@ -1,5 +1,6 @@
 package tech.bsdb.util;
 
+import tech.bsdb.io.Native;
 import tech.bsdb.io.NativeFileIO;
 import com.conversantmedia.util.concurrent.DisruptorBlockingQueueModified;
 import com.conversantmedia.util.concurrent.MPMCBlockingQueue;
@@ -389,5 +390,9 @@ public class Common {
             is = new ZstdInputStream(is);
         }
         return new BufferedReader(new InputStreamReader(is, charset));
+    }
+
+    public static boolean isUringEnabled(){
+        return Boolean.getBoolean("bsdb.uring") && Native.Uring.available;
     }
 }

@@ -1,8 +1,13 @@
 package tech.bsdb.io;
 
+import it.unimi.dsi.bits.TransformationStrategies;
+import it.unimi.dsi.fastutil.io.BinIO;
+import it.unimi.dsi.sux4j.mph.GOVMinimalPerfectHashFunction;
 import junit.framework.TestCase;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class NativeTest extends TestCase {
     String file = "build.gradle";
@@ -26,7 +31,7 @@ public class NativeTest extends TestCase {
     }
 
     public void testAvailableSQ() throws IOException {
-        try(Native.Uring uring = new Native.Uring(128, 0)) {
+        try (Native.Uring uring = new Native.Uring(128, 0)) {
             int available = uring.availableSQ();
             assertTrue(available > 0);
         }
@@ -105,5 +110,47 @@ public class NativeTest extends TestCase {
     }
 
     public void testClose() {
+    }
+
+    public void testLoadHash() throws IOException {
+        int ITERATIONS = 1000000;
+        String hashFileRaw = "./gov_min_hash.raw";
+        String hashFileObj = "./gov_min_hash.obj";
+        List<byte[]> keys = new ArrayList<byte[]>();
+        for (int i = 0; i < ITERATIONS; i++) {
+            keys.add(("" + i).getBytes());
+        }
+        GOVMinimalPerfectHashFunction.Builder<byte[]> builder = new GOVMinimalPerfectHashFunction.Builder<byte[]>();
+        builder.keys(keys).transform(TransformationStrategies.byteArray()).signed(12);
+        GOVMinimalPerfectHashFunction<byte[]> hashFunction = builder.build();
+        hashFunction.dump(hashFileRaw);
+        BinIO.storeObject(hashFunction, hashFileObj);
+
+        long hashFun = Native.loadHash(hashFileRaw);
+        for (int i = 0; i < ITERATIONS; i++) {
+            byte[] key = ("" + i).getBytes();
+            long hash1 = hashFunction.getLong(key);
+            long hash2 = Native.getHash(hashFun, key);
+            assertEquals(hash1, hash2);
+        }
+
+        long start = System.nanoTime();
+        long hash = 0;
+        for (int i = 0; i < 1000; i++) {
+            for (byte[] key : keys) {
+                hash += hashFunction.getLong(key);
+            }
+        }
+        long cost = System.nanoTime() - start;
+        System.err.printf("hash using java cost:  %d %d %n", cost, cost / ITERATIONS / 1000);
+
+        start = System.nanoTime();
+        for (int i = 0; i < 1000; i++) {
+            for (byte[] key : keys) {
+                hash += Native.getHash(hashFun, key);
+            }
+        }
+        cost = System.nanoTime() - start;
+        System.err.printf("hash using java cost:  %d %d %n", cost, cost / ITERATIONS / 1000);
     }
 }

@@ -47,6 +47,13 @@ JNIEXPORT jlong JNICALL Java_tech_bsdb_io_Native_pread
 JNIEXPORT jint JNICALL Java_tech_bsdb_io_Native_close
   (JNIEnv *, jclass, jint);
 
+
+JNIEXPORT jlong JNICALL Java_tech_bsdb_io_Native_loadHash
+  (JNIEnv *, jclass, jstring);
+
+JNIEXPORT jlong JNICALL Java_tech_bsdb_io_Native_getHash
+  (JNIEnv *, jclass, jlong, jbyteArray);
+
 #ifdef __cplusplus
 }
 #endif

@@ -51,7 +51,7 @@ public abstract class PartitionedKVReader extends BaseKVReader {
     }
 
     protected void startAsyncReader(int readBlockSize) {
-        boolean useUring = Boolean.getBoolean("bsdb.uring");
+        boolean useUring = Common.isUringEnabled();
         int submitThreads = Common.getPropertyAsInt("bsdb.reader.kv.submit.threads", Math.max(Common.CPUS / 2, 2));
         //int callbackThreads = Common.getPropertyAsInt("bsdb.reader.kv.callback.threads", 1);
         this.asyncReader = useUring ?
