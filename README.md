@@ -37,80 +37,51 @@ For some specific application scenarios, the application can tolerate some inacc
 - For keys not in the database, the query may return null or a wrong random record. The error rate is related to the checksum bits setting.
 - The size of the corresponding value is limited by now: only the first 8 bytes of the value will be kept. Regardless of the value when inserting, the value obtained by querying will be uniformly returned as a byte[8] array. The application layer needs to process it by itself.
 
-#### On Disk Storage Structure
+#### Performance Test Results
 
-BSDB is a KV database that consists of a configuration file, a series data files, and an index file. KV records are stored in data files, while the index file stores the location of a certain key in data files. The configuration file stores the parameters used t built and some statistical information of the dataset.
+Test Environment:
 
-##### Index file
+    JD Cloud, Storage-Optimized IO Instance s.i3.4xlarge, with 16 CPU cores, 64GB memory, and 2 x 1862 NVMe SSDs.
 
-BSDB uses a two-level indexing mechanism to locate records. The first level index is a minimal perfect hash function. This hash function maps the input key to an unique integer. Through this integer, the actual location of the record in data files can be found in the second level index.
+The allocated instance is running on this CPU model: Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz, 24 cores, 48 threads, with approximately 1/3 of the cores allocated to the instance.
 
-The perfect hash function is constructed by collecting the full set of keys in the data set. After construction is completed, a function can be generated to map N keys to integers in the range of 1-N, and different keys will be mapped to different numbers. When querying a key that does not exist in the database, the hash function may incorrectly return a number. At this time, the stored record needs to be read to compare and determine that the input key does exist in the data set or not. To address this issue, a checksum of the key can be stored in advance. By comparing the checksum, this situation could be discovered earlier, thereby reducing lots of disk reads. The false positive rate of different checksum lengths is as follows:
+Using fio to test the disk randread performance, the io_uring and aio engines can achieve around 1300K IOPS with bs=4K, approximately 700K IOPS with bs=8K, and around 380K IOPS with bs=16K.
 
-|checksum bits	|false positive ratio|
-|--|---|
-|2	|12.5%|
-|4	|6.2%|
-|8	|0.39%|
-|10|0.097%|
-|12|0.025%|
+The test dataset contains 13 billion records, with the following statistics:
 
-The perfect hash function needs to be loaded into memory during serving. Its size can be calculated by: the number of records x ((3+checksum)/8) bytes. For a data set of 10 billion records, if the checksum is chosen to be 5, the perfect hash function might consume approximately 10GB of heap memory.
+    kv.compressed = false
+    kv.compact = false
+    index.approximate = false
+    hash.checksum.bits = 4
+    kv.count = 13193787549
+    kv.key.len.max = 13
+    kv.key.len.avg = 13
+    kv.value.len.max = 36
+    kv.value.len.avg = 32
 
-The second level index is a disk-based address array. Each address reserves a length of 8 bytes, so the size of the second level index is: number of records x 8 bytes. For a data set of 10 billion records, the second level index file is approximately 80GB. The second level index file does not must be loaded into memory during runtime. If the available memory is larger enough or close to the size of the second level index file, the Buffered IO should be choosed to read the index file to take advantage of the page cache of the operating system. However, if the system memory is small by compare to index file size, it is more suitable to use the Direct IO mode to bypass the system cache to read the second level index file which might obtain higher performance.
+BSDB synchronous query performance:
 
-##### Data Files
+|threads|16|32|48|64|80|96|112|128|144|160|176|192|208|224|240|256|272|286|302|318|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
 
-The data files are used to store the original KV records. Records are in the following format:
+Synchronous queries require a higher level of concurrent threads to fully utilize disk IO. The maximum achievable QPS is close to 550,000, which is approaching but still below the limit of SSD IO performance (theoretical maximum of 1,300K IOPS divided by 2 IOPS per query, ideally reaching 650,000 QPS). If the server's CPU configuration were higher, there might be room for further QPS improvement.
 
-    [record begin][record header][key][value][record end]
+Enabling approximate mode in synchronous queries can achieve about 1 million QPS. In asynchronous query mode with IO Uring enabled, it can reach 500,000 QPS. Compared to synchronous mode, there is no absolute advantage in QPS, but it provides a better balance between CPU utilization and QPS.
 
-The first byte of record header stores the length of the key, and the second and third bytes of record header stores the length of the value. Then follows the raw content of the key, and then the raw content of the value. The length of the key supports 1-255, and the length of the value is currently limited to 0-32510.
+#### Pre-requisite
 
-The arrangement of records in the data file supports two formats: compact and blocked. The compact mode format is as follows:
+- Linux x86 64bit
+- JDK 9 or 11
+- Optional: liburing(https://github.com/axboe/liburing) if you want to build the project or running AsyncReader with io uring features turned on.
 
-    [file begin][record 1][record 2].....[record n][file end]
+#### Build the project
 
-The blocked format is as follows:
+    git clone https://github.com/yc-huang/bsdb
+    cd bsdb
+    ./gradlew jar customFatJar
 
-    [file begin][block 1][block 2].....[block n][file end]
-
-In blocked mode, records are first assembled into blocks using compact format and then written to the data file in blocks. The size of the block should be multiple of 4096. A single record will not be stored across blocks. Therefore, the end of the block may leave a portion of unused space. 
-For records larger than one block, they will be stored separately in a Large Block. The size of the Large Block also needs to be a multiple of 4K, and the remaining space at the end of the Large Block will not be used to store other records.
-
-The compact mode use less disk space but may affect read performance since some records read might cross the 4K boundary during query. The block mode makes each block aligned to 4K, making it more friendly to IO for read.
-
-The database file currently supports compression as well, and the chosen compression algorithm is ZSTD. The compression level is default to 6 (tests show that higher compression levels do not necessarily result in better compression rates and may have variations). The disk format of the compressed data file is as following:
-
-    [file begin][compressed block 1][compressed block 2]
-
-Compressed blocks are arranged compactly on disk. There are plans to add support for aligned compressed blocks in the future. The internal format of each compressed block is as follows:
-
-    [block begin][block header][block data][block end]
-
-The block header is 8 bytes long, where the first two bytes represent the length of the compressed data, the next two bytes represent the length of the original uncompressed data, and the remaining 4 bytes are reserved. Using only 2 bytes to represent the length is because BSDB expects to handle relatively small records. The block data section is used to store the block data after compressing.
-
-#### Build Process
-
-The current workflow of the Builder tool is as follows:
-
-- Sample the input files to collect some statistical information about K and V, including compression-related details, and generate a prebuilt shared compression dictionary.
-- Parse the input data files to construct BSDB data files and collect all the keys. 
-- Build a perfect hash using the collected keys.
-- Scan the BSDB data files, iterate through all keys and collect the addresses of corresponding KV records; query the perfect hash, and construct the index file.
-
-During the third step of building the index file, the index content is constructed in memory and then written to disk in batch to avoid random I/O. This allows the build process to be efficiently completed in environments based on HDD or cloud object storage. In cases where the database has a large number of records and the entire index cannot fit in memory, the Builder tool solves this by scanning the data files multiple times and building a portion of the index each time. The size of the off-heap memory used to hold index can be set using the "ps" parameter.
-
-#### Caching
-
-Currently, BSDB does not provide any internal caching, and this is based on several considerations:
-
-- In many scenarios, the input keys for queries are completely random and widely distributed, resulting in very low cache efficiency (cache hits/cache size).
-- If system memory size is on par with active dataset, the OS page cache should work well.
-- If necessary, plugin an external cache at the application layer is a mature solution.
-- Maintaining caches adds complexity and incurs performance overhead.
-
-However, for certain scenarios, there is still some locality in queries, and in such cases, using memory more aggressively can achieve performance improvements. Moreover, most cloud instances nowadays have a relatively high amount of memory per CPU configuration (4-8GB), which often means that the server running BSDB tends to have fewer CPUs and more memory as expected. In such cases, it might be worth considering to introduce a Block Cache to fully utilize the available memory.
+You might find the built jars under build/libs directory.
 
 #### Tools
 ##### Builder
@@ -170,7 +141,7 @@ Based on the test results of some internal datasets, the size of the generated c
 
 ##### Web Service Tool
 
-The system provides a simple HTTP query service based on Netty. Command:
+The system provides a simple HTTP query service to serve the built database based on Netty. Command:
 
     java -cp bsdb-jar-with-dependencies.jar tech.bsdb.tools.HttpServer -d <root directory of the database file>
 
@@ -288,37 +259,81 @@ Example:
 
     /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar tech.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id
 
-###### Performance Test Results
 
-Test Environment: 
+#### On Disk Storage Structure
 
-    JD Cloud, Storage-Optimized IO Instance s.i3.4xlarge, with 16 CPU cores, 64GB memory, and 2 x 1862 NVMe SSDs.
+BSDB is a KV database that consists of a configuration file, a series data files, and an index file. KV records are stored in data files, while the index file stores the location of a certain key in data files. The configuration file stores the parameters used t built and some statistical information of the dataset.
 
-The allocated instance is running on this CPU model: Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz, 24 cores, 48 threads, with approximately 1/3 of the cores allocated to the instance.
+##### Index file
 
-Using fio to test the disk randread performance, the io_uring and aio engines can achieve around 1300K IOPS with bs=4K, approximately 700K IOPS with bs=8K, and around 380K IOPS with bs=16K.
+BSDB uses a two-level indexing mechanism to locate records. The first level index is a minimal perfect hash function. This hash function maps the input key to an unique integer. Through this integer, the actual location of the record in data files can be found in the second level index.
 
-The test dataset contains 13 billion records, with the following statistics:
+The perfect hash function is constructed by collecting the full set of keys in the data set. After construction is completed, a function can be generated to map N keys to integers in the range of 1-N, and different keys will be mapped to different numbers. When querying a key that does not exist in the database, the hash function may incorrectly return a number. At this time, the stored record needs to be read to compare and determine that the input key does exist in the data set or not. To address this issue, a checksum of the key can be stored in advance. By comparing the checksum, this situation could be discovered earlier, thereby reducing lots of disk reads. The false positive rate of different checksum lengths is as follows:
 
-    kv.compressed = false
-    kv.compact = false
-    index.approximate = false
-    hash.checksum.bits = 4
-    kv.count = 13193787549
-    kv.key.len.max = 13
-    kv.key.len.avg = 13
-    kv.value.len.max = 36
-    kv.value.len.avg = 32
+|checksum bits	|false positive ratio|
+|--|---|
+|2	|12.5%|
+|4	|6.2%|
+|8	|0.39%|
+|10|0.097%|
+|12|0.025%|
 
-BSDB synchronous query performance:
+The perfect hash function needs to be loaded into memory during serving. Its size can be calculated by: the number of records x ((3+checksum)/8) bytes. For a data set of 10 billion records, if the checksum is chosen to be 5, the perfect hash function might consume approximately 10GB of heap memory.
 
-|threads|16|32|48|64|80|96|112|128|144|160|176|192|208|224|240|256|272|286|302|318|
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-|qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
+The second level index is a disk-based address array. Each address reserves a length of 8 bytes, so the size of the second level index is: number of records x 8 bytes. For a data set of 10 billion records, the second level index file is approximately 80GB. The second level index file does not must be loaded into memory during runtime. If the available memory is larger enough or close to the size of the second level index file, the Buffered IO should be choosed to read the index file to take advantage of the page cache of the operating system. However, if the system memory is small by compare to index file size, it is more suitable to use the Direct IO mode to bypass the system cache to read the second level index file which might obtain higher performance.
 
-Synchronous queries require a higher level of concurrent threads to fully utilize disk IO. The maximum achievable QPS is close to 550,000, which is approaching but still below the limit of SSD IO performance (theoretical maximum of 1,300K IOPS divided by 2 IOPS per query, ideally reaching 650,000 QPS). If the server's CPU configuration were higher, there might be room for further QPS improvement.
+##### Data Files
 
-Enabling approximate mode in synchronous queries can achieve about 1 million QPS. In asynchronous query mode with IO Uring enabled, it can reach 500,000 QPS. Compared to synchronous mode, there is no absolute advantage in QPS, but it provides a better balance between CPU utilization and QPS.
+The data files are used to store the original KV records. Records are in the following format:
+
+    [record begin][record header][key][value][record end]
+
+The first byte of record header stores the length of the key, and the second and third bytes of record header stores the length of the value. Then follows the raw content of the key, and then the raw content of the value. The length of the key supports 1-255, and the length of the value is currently limited to 0-32510.
+
+The arrangement of records in the data file supports two formats: compact and blocked. The compact mode format is as follows:
+
+    [file begin][record 1][record 2].....[record n][file end]
+
+The blocked format is as follows:
+
+    [file begin][block 1][block 2].....[block n][file end]
+
+In blocked mode, records are first assembled into blocks using compact format and then written to the data file in blocks. The size of the block should be multiple of 4096. A single record will not be stored across blocks. Therefore, the end of the block may leave a portion of unused space.
+For records larger than one block, they will be stored separately in a Large Block. The size of the Large Block also needs to be a multiple of 4K, and the remaining space at the end of the Large Block will not be used to store other records.
+
+The compact mode use less disk space but may affect read performance since some records read might cross the 4K boundary during query. The block mode makes each block aligned to 4K, making it more friendly to IO for read.
+
+The database file currently supports compression as well, and the chosen compression algorithm is ZSTD. The compression level is default to 6 (tests show that higher compression levels do not necessarily result in better compression rates and may have variations). The disk format of the compressed data file is as following:
+
+    [file begin][compressed block 1][compressed block 2]
+
+Compressed blocks are arranged compactly on disk. There are plans to add support for aligned compressed blocks in the future. The internal format of each compressed block is as follows:
+
+    [block begin][block header][block data][block end]
+
+The block header is 8 bytes long, where the first two bytes represent the length of the compressed data, the next two bytes represent the length of the original uncompressed data, and the remaining 4 bytes are reserved. Using only 2 bytes to represent the length is because BSDB expects to handle relatively small records. The block data section is used to store the block data after compressing.
+
+#### Build Process
+
+The current workflow of the Builder tool is as follows:
+
+- Sample the input files to collect some statistical information about K and V, including compression-related details, and generate a prebuilt shared compression dictionary.
+- Parse the input data files to construct BSDB data files and collect all the keys.
+- Build a perfect hash using the collected keys.
+- Scan the BSDB data files, iterate through all keys and collect the addresses of corresponding KV records; query the perfect hash, and construct the index file.
+
+During the third step of building the index file, the index content is constructed in memory and then written to disk in batch to avoid random I/O. This allows the build process to be efficiently completed in environments based on HDD or cloud object storage. In cases where the database has a large number of records and the entire index cannot fit in memory, the Builder tool solves this by scanning the data files multiple times and building a portion of the index each time. The size of the off-heap memory used to hold index can be set using the "ps" parameter.
+
+#### Caching
+
+Currently, BSDB does not provide any internal caching, and this is based on several considerations:
+
+- In many scenarios, the input keys for queries are completely random and widely distributed, resulting in very low cache efficiency (cache hits/cache size).
+- If system memory size is on par with active dataset, the OS page cache should work well.
+- If necessary, plugin an external cache at the application layer is a mature solution.
+- Maintaining caches adds complexity and incurs performance overhead.
+
+However, for certain scenarios, there is still some locality in queries, and in such cases, using memory more aggressively can achieve performance improvements. Moreover, most cloud instances nowadays have a relatively high amount of memory per CPU configuration (4-8GB), which often means that the server running BSDB tends to have fewer CPUs and more memory as expected. In such cases, it might be worth considering to introduce a Block Cache to fully utilize the available memory.
 
 #### Notes
 
