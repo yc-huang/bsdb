@@ -31,77 +31,49 @@ BSDB是一种新型的只读KV数据库。
 - 对于不包含在数据库中的key，查询可能返回null，也可能返回一条错误记录，其错误率和checksum bits相关
 - 对应的value大小有限制，目前只会保存value的前8 bytes;且不管插入时是什么格式，查得的value会统一返回为byte[8]数组，应用层需要自行进行处理
 
-#### 存储结构设计
-BSDB是一种KV数据库，核心由配置文件，数据文件和索引文件构成。KV记录保存在数据文件里，索引文件则记录了某个Key对应的记录在数据文件内的位置，而配置文件中记录构建时的参数和数据库的统计信息。
+###### 性能测试结果
+测试环境：京东云 存储优化IO型实例 s.i3.4xlarge，配置 16 cpu cores，64GB内存，2 x 1862 NVMe SSD。
 
-##### 索引文件
-BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash函数，该函数会将输入的Key映射为一个整数，通过这个整数可以在第二级索引里对应的位置找到该Key对应的记录在数据文件内的地址。
+实测实例的CPU型号为：Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz， 24核心，48超线程，应该是给实例分配了1/3的超线程核心。
 
-完美Hash函数通过传入数据集的全量的Key来构建，构建完成后，可以生成一个函数，将N个Key映射为范围为1-N的整数，且不同的Key会映射到不同的数字。但当输入数据库中不存在的Key时，Hash函数可能会错误返回一个数字，此时就需要通过索引读取数据文件中保存的记录信息进行比对，才可以发现输入的Key在数据集中不存在;针对这个问题，可以预先保存Key的checksum，通过checksum比对可以提前发现这种情况，从而减少一部分磁盘的读需求。不同的checksum长度对应的false positive rate如下：
+利用fio测试磁盘randread性能，io_uring和aio engine在bs=4K可以达到1300K iops， bs=8K大约700K iops，bs=16K大约380K iops。
 
-|checksum bits                          |false positive ratio |
-|-------------------------------|-----------------------------|
-|2            |12.5%            |
-|4            |6.2%            |
-|8            |0.39%           |
-|10            |0.097%           |
-|12            |0.025%           |
+测试数据集包含130亿条记录，详细情况如下：
 
-完美Hash函数运行时需要加载到内存，其大小为：记录数 x ((3+checksum) / 8) 字节。对于一个100亿的数据集，checksum选择5，则完美Hash函数需要接近10GB的HEAP内存。
+    kv.compressed = false
+    kv.compact = false
+    index.approximate = false
+    hash.checksum.bits = 4
+    kv.count = 13193787549
+    kv.key.len.max = 13
+    kv.key.len.avg = 13
+    kv.value.len.max = 36
+    kv.value.len.avg = 32
 
-第二级索引为一个基于磁盘的地址数组，每个地址预留的长度为8字节，因此第二级索引的大小为：记录数 x 8 字节。对于100亿记录的数据集，二级索引文件大概是80GB。二级索引文件运行时不需要加载到内存;如果系统的可用内存大于或者接近二级索引文件大小，则利用Buffered IO来读取索引文件，可以利用操作系统的页面缓存来加速;不过如果系统内存较小，则更适合利用Direct模式跳过系统缓存来读取二级索引文件，更有可能获得较高性能。
+BSDB同步查询性能：
 
-##### 数据文件
-数据文件用于存储原始KV记录。
-每个记录的格式如下：
+|threads|16|32|48|64|80|96|112|128|144|160|176|192|208|224|240|256|272|286|302|318|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
 
-    [record begin][record header][key][value][record end]  
+同步查询需要较大的并发线程才可以充分利用磁盘IO，最高可以接近55万qps，接近但应该还没有达到SSD IO性能的极限(理论上每次查询2次IO，理想情况下应该能做到1300K iops/ 2 iops = 650K qps); 要是服务器的CPU配置再高一些，可能qps还有一定提升的空间。
 
-记录的开头是record header，header的首字节记录Key的长度，第2-3字节记录Value的长度。record header后边是Key的具体内容，接下来是Value的具体内容。Key的长度支持1-255字节，而Value的长度目前限定为0-32510。
+同步查询启用模糊索引，可以达到100万qps; 异步查询模式下启用IO Uring，可以达到50万qps，相比同步模式qps没有绝对优势，不过更易于在CPU利用率和qps间平衡。
 
-数据文件内记录的排布支持两种格式：紧凑和分块。紧凑模式格式如下：
+#### 项目依赖
 
-    [file begin][record 1][record 2].....[record n][file end]
+- Linux x86 64bit
+- JDK 9 or 11
+- 可选: liburing(https://github.com/axboe/liburing) 如果你需要手工编译项目，或者在使用AsyncReader的时候打开io uring特性，则需要根据liburing项目文档的提示来安装liburing.
 
-而分块模式下磁盘格式如下:
+#### 手动编译项目
 
-    [file begin][block 1][block 2].....[block n][file end]
+    git clone https://github.com/yc-huang/bsdb
+    cd bsdb
+    ./gradlew jar customFatJar
 
-记录会先按紧凑格式组装成Block，然后按Block写入数据文件; Block的大小为4K的倍数。单条记录不会跨Block存储，因此Block尾部可能会留下一部分未能利用的空间。对于记录大小大于一个Block的记录，会单独保存到一个Large Block， Large Block的大小也需要是4K的倍数，且Large Block尾部剩余的空间也不会用于保存其他记录。
+编译好的Jar可以在 build/libs 目录下找到.
 
-紧凑模式节省磁盘空间，但查询时部分记录可能会跨越4K的边界，会对读性能有一些影响;分块模式下每个块都是对齐到4K的，对读更友好。另外分块模式下可以支持压缩。
-
-目前数据库文件也支持压缩，压缩算法为ZSTD，压缩级别缺省为6(测试表明不一定压缩级别越高，压缩率就一定更好，也会有变差的情况)。压缩格式下数据文件的磁盘格式如下：
-
-    [file begin][compressed block 1][compressed block 2].....[compressed block n][file end]
-
-compressed block在磁盘上是紧凑排列; 后续计划增加compressed block按Page对齐的格式支持。每个compressed block内部的格式如下：
-
-    [block begin][block header][block data][block end]
-
-其中block header为8 bytes，1-2字节为压缩后数据的长度，3-4字节为压缩前数据的长度，5-8字节保留; 只是用2字节来表示长度是因为BSDB预期的场景更多是保存相对小的记录。block data部分则用于保存压缩后的block数据。
-
-
-
-#### 构建过程
-
-目前Builder工具的工作流程如下：
-
-- 对输入文件进行采样，收集K，V的一些统计信息，压缩率相关的信息，并生成共享压缩字典
-- 解析输入数据文件，构建BSDB数据文件，并保存所有的Key
-- 利用保存的Key构建完美Hash
-- 扫描BSDB数据文件，读取Key及KV记录的地址，查询完美Hash，构建索引文件
-
-第三步构建索引文件时，索引内容在内存中构建，构建完成后批量写入磁盘，从而规避随机IO，让构建过程在基于机械硬盘或者对象存储的环境中也可以高效完成。在数据库记录数很多，索引不能完全放在内存中的情况下，Builder工具通过多次扫描数据文件，每次构建一部分索引来解决，此时通过ps参数来设定每次构建索引时需要的off-heap内存的大小。
-
-#### 缓存
-目前BSDB内部没有提供任何缓存，这主要基于几个考虑：
-- 很多场景下查询输入的Key是完全随机的，且分布很散，缓存效率(命中/缓存大小)不高
-- 如果数据集不是特别大，或者系统内存资源很丰富，OS的页面缓存也很有效
-- 如果场景确有必要，应用层外挂一个缓存也是很成熟的方案
-- 缓存维护增加复杂性，也有性能开销
-
-当然对某些场景，查询还是有一定的局部性，此时通过内存还是能换来一定的性能提升，且现在云主机大都每CPU配置的内存比较高(4-8GB)，对于BSDB来说往往是CPU偏少而内存偏多，此时或许应该考虑引入Block Cache来充分利用内存。
 
 #### 工具
 
@@ -157,7 +129,7 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
 
 ##### Web服务工具
-系统提供了一个简易的基于Netty的Web查询服务。 命令： 
+系统提供了一个简易的基于Netty的Web查询服务来为build好的数据库提供查询访问。 命令： 
     
     java -cp bsdb-jar-with-dependencies.jar tech.bsdb.tools.HttpServer -d <数据库文件的根目录>
 
@@ -272,35 +244,78 @@ compressed block在磁盘上是紧凑排列; 后续计划增加compressed block�
 
     /home/hadoop/jdk-11.0.2/bin/java -ms16G -mx16G -Dbsdb.uring=true -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dbsdb.reader.kv.submit.threads=10 -Dbsdb.reader.index.submit.threads=10 --illegal-access=permit --add-exports java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp bsdb-jar-with-dependencies-0.1.2.jar    tech.bsdb.bench.AsyncQueryBench -id -kd -v -k ../100e_id 
 
+#### 存储结构设计
+BSDB是一种KV数据库，核心由配置文件，数据文件和索引文件构成。KV记录保存在数据文件里，索引文件则记录了某个Key对应的记录在数据文件内的位置，而配置文件中记录构建时的参数和数据库的统计信息。
 
-###### 性能测试结果
-测试环境：京东云 存储优化IO型实例 s.i3.4xlarge，配置 16 cpu cores，64GB内存，2 x 1862 NVMe SSD。
+##### 索引文件
+BSDB的记录寻址由两级索引来完成。第一级索引为一个完美Hash函数，该函数会将输入的Key映射为一个整数，通过这个整数可以在第二级索引里对应的位置找到该Key对应的记录在数据文件内的地址。
 
-实测实例的CPU型号为：Intel(R) Xeon(R) Gold 6267C CPU @ 2.60GHz， 24核心，48超线程，应该是给实例分配了1/3的超线程核心。   
+完美Hash函数通过传入数据集的全量的Key来构建，构建完成后，可以生成一个函数，将N个Key映射为范围为1-N的整数，且不同的Key会映射到不同的数字。但当输入数据库中不存在的Key时，Hash函数可能会错误返回一个数字，此时就需要通过索引读取数据文件中保存的记录信息进行比对，才可以发现输入的Key在数据集中不存在;针对这个问题，可以预先保存Key的checksum，通过checksum比对可以提前发现这种情况，从而减少一部分磁盘的读需求。不同的checksum长度对应的false positive rate如下：
 
-利用fio测试磁盘randread性能，io_uring和aio engine在bs=4K可以达到1300K iops， bs=8K大约700K iops，bs=16K大约380K iops。
+|checksum bits                          |false positive ratio |
+|-------------------------------|-----------------------------|
+|2            |12.5%            |
+|4            |6.2%            |
+|8            |0.39%           |
+|10            |0.097%           |
+|12            |0.025%           |
 
-测试数据集包含130亿条记录，详细情况如下：
-    
-    kv.compressed = false
-    kv.compact = false
-    index.approximate = false
-    hash.checksum.bits = 4
-    kv.count = 13193787549
-    kv.key.len.max = 13
-    kv.key.len.avg = 13
-    kv.value.len.max = 36
-    kv.value.len.avg = 32
+完美Hash函数运行时需要加载到内存，其大小为：记录数 x ((3+checksum) / 8) 字节。对于一个100亿的数据集，checksum选择5，则完美Hash函数需要接近10GB的HEAP内存。
 
-BSDB同步查询性能：
+第二级索引为一个基于磁盘的地址数组，每个地址预留的长度为8字节，因此第二级索引的大小为：记录数 x 8 字节。对于100亿记录的数据集，二级索引文件大概是80GB。二级索引文件运行时不需要加载到内存;如果系统的可用内存大于或者接近二级索引文件大小，则利用Buffered IO来读取索引文件，可以利用操作系统的页面缓存来加速;不过如果系统内存较小，则更适合利用Direct模式跳过系统缓存来读取二级索引文件，更有可能获得较高性能。
 
-|threads|16|32|48|64|80|96|112|128|144|160|176|192|208|224|240|256|272|286|302|318|
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-|qps|86212|154476|211490|258228|299986|338324|369659|399818|425796|448242|466551|487761|510411|529005|537797|544188|553712|554448|553728|558394|
+##### 数据文件
+数据文件用于存储原始KV记录。
+每个记录的格式如下：
 
-同步查询需要较大的并发线程才可以充分利用磁盘IO，最高可以接近55万qps，接近但应该还没有达到SSD IO性能的极限(理论上每次查询2次IO，理想情况下应该能做到1300K iops/ 2 iops = 650K qps); 要是服务器的CPU配置再高一些，可能qps还有一定提升的空间。
+    [record begin][record header][key][value][record end]  
 
-同步查询启用模糊索引，可以达到100万qps; 异步查询模式下启用IO Uring，可以达到50万qps，相比同步模式qps没有绝对优势，不过更易于在CPU利用率和qps间平衡。 
+记录的开头是record header，header的首字节记录Key的长度，第2-3字节记录Value的长度。record header后边是Key的具体内容，接下来是Value的具体内容。Key的长度支持1-255字节，而Value的长度目前限定为0-32510。
+
+数据文件内记录的排布支持两种格式：紧凑和分块。紧凑模式格式如下：
+
+    [file begin][record 1][record 2].....[record n][file end]
+
+而分块模式下磁盘格式如下:
+
+    [file begin][block 1][block 2].....[block n][file end]
+
+记录会先按紧凑格式组装成Block，然后按Block写入数据文件; Block的大小为4K的倍数。单条记录不会跨Block存储，因此Block尾部可能会留下一部分未能利用的空间。对于记录大小大于一个Block的记录，会单独保存到一个Large Block， Large Block的大小也需要是4K的倍数，且Large Block尾部剩余的空间也不会用于保存其他记录。
+
+紧凑模式节省磁盘空间，但查询时部分记录可能会跨越4K的边界，会对读性能有一些影响;分块模式下每个块都是对齐到4K的，对读更友好。另外分块模式下可以支持压缩。
+
+目前数据库文件也支持压缩，压缩算法为ZSTD，压缩级别缺省为6(测试表明不一定压缩级别越高，压缩率就一定更好，也会有变差的情况)。压缩格式下数据文件的磁盘格式如下：
+
+    [file begin][compressed block 1][compressed block 2].....[compressed block n][file end]
+
+compressed block在磁盘上是紧凑排列; 后续计划增加compressed block按Page对齐的格式支持。每个compressed block内部的格式如下：
+
+    [block begin][block header][block data][block end]
+
+其中block header为8 bytes，1-2字节为压缩后数据的长度，3-4字节为压缩前数据的长度，5-8字节保留; 只是用2字节来表示长度是因为BSDB预期的场景更多是保存相对小的记录。block data部分则用于保存压缩后的block数据。
+
+
+
+#### 构建过程
+
+目前Builder工具的工作流程如下：
+
+- 对输入文件进行采样，收集K，V的一些统计信息，压缩率相关的信息，并生成共享压缩字典
+- 解析输入数据文件，构建BSDB数据文件，并保存所有的Key
+- 利用保存的Key构建完美Hash
+- 扫描BSDB数据文件，读取Key及KV记录的地址，查询完美Hash，构建索引文件
+
+第三步构建索引文件时，索引内容在内存中构建，构建完成后批量写入磁盘，从而规避随机IO，让构建过程在基于机械硬盘或者对象存储的环境中也可以高效完成。在数据库记录数很多，索引不能完全放在内存中的情况下，Builder工具通过多次扫描数据文件，每次构建一部分索引来解决，此时通过ps参数来设定每次构建索引时需要的off-heap内存的大小。
+
+#### 缓存
+目前BSDB内部没有提供任何缓存，这主要基于几个考虑：
+- 很多场景下查询输入的Key是完全随机的，且分布很散，缓存效率(命中/缓存大小)不高
+- 如果数据集不是特别大，或者系统内存资源很丰富，OS的页面缓存也很有效
+- 如果场景确有必要，应用层外挂一个缓存也是很成熟的方案
+- 缓存维护增加复杂性，也有性能开销
+
+当然对某些场景，查询还是有一定的局部性，此时通过内存还是能换来一定的性能提升，且现在云主机大都每CPU配置的内存比较高(4-8GB)，对于BSDB来说往往是CPU偏少而内存偏多，此时或许应该考虑引入Block Cache来充分利用内存。
+
 
 #### 注意事项
 - JDK版本支持9-11，暂不支持17等更高版本
