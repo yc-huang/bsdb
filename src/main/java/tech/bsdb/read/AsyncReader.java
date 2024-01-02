@@ -1,6 +1,7 @@
 package tech.bsdb.read;
 
 import org.apache.commons.configuration2.Configuration;
+import tech.bsdb.io.Native;
 import tech.bsdb.read.index.AsyncDirectIndexReader;
 import tech.bsdb.read.index.AsyncIndexReader;
 import tech.bsdb.read.index.AsyncLBufferIndexReader;
@@ -31,7 +32,7 @@ public class AsyncReader extends Reader {
     public AsyncReader(File basePath, boolean approximate, boolean indexReadDirect, boolean kvReadDirect) throws IOException, ClassNotFoundException {
         super(basePath, approximate);
 
-        boolean useUring = Boolean.getBoolean("bsdb.uring");
+        boolean useUring = Common.isUringEnabled();
         int submitThreads = Common.getPropertyAsInt("bsdb.reader.index.submit.threads", Math.max(Common.CPUS / 2, 2));
         //int callbackThreads = Common.getPropertyAsInt("bsdb.reader.index.callback.threads", 1);
 

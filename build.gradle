@@ -8,7 +8,7 @@ plugins {
 
 group 'tech.bsdb'
 archivesBaseName = "bsdb-core"
-version '0.1.2'
+version '0.1.3'
 
 sourceCompatibility = 1.9
 
@@ -73,11 +73,13 @@ dependencies {
 test {
     testLogging.showStandardStreams = true
     systemProperty "java.library.path", file("${buildDir}/libs/bsdbjni/shared").absolutePath
+    systemProperty "java.library.path", file("${buildDir}/libs/bsdburingjni/shared").absolutePath
 }
 
 
 processResources {
     from "${buildDir}/libs/bsdbjni/shared/"
+    from "${buildDir}/libs/bsdburingjni/shared/"
 }
 
 
@@ -108,7 +110,7 @@ model {
     binaries {
         all {
             if (toolChain in Gcc) {
-                cCompiler.args "-O2"
+                cCompiler.args "-O3"
                 linker.args "-shared", "-fPIC",  "-luring"
             }
         }
@@ -144,10 +146,22 @@ model {
                 c {
                     source {
                         lib library: 'bsdbjni', linkage: 'static'
+                        lib library: 'jdk', linkage: 'api'
+                        srcDir "src/main/c"
+                        include "*.c"
+                    }
+                }
+            }
+        }
+        bsdburingjni(NativeLibrarySpec) {
+            sources {
+                c {
+                    source {
+                        lib library: 'bsdburingjni', linkage: 'static'
                         lib library: 'liburing', linkage: 'api'
                         lib library: 'jdk', linkage: 'api'
                         srcDir "src/main/c"
-                        include "**/*.c"
+                        include "uring/*.c"
                     }
                 }
             }
@@ -213,3 +227,7 @@ uploadArchives {
 build.dependsOn("bsdbjniSharedLibrary")
 test.dependsOn("bsdbjniSharedLibrary")
 processResources.dependsOn("bsdbjniSharedLibrary")
+
+build.dependsOn("bsdburingjniSharedLibrary")
+test.dependsOn("bsdburingjniSharedLibrary")
+processResources.dependsOn("bsdburingjniSharedLibrary")

@@ -1,9 +1,13 @@
 package tech.bsdb.io;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Closeable;
 import java.io.IOException;
 
 public class Native {
+    static Logger logger = LoggerFactory.getLogger(Native.class);
 
     static {
             NativeUtils.loadLibraryFromJar(System.mapLibraryName("bsdbjni"));
@@ -11,10 +15,17 @@ public class Native {
     public static class Uring implements Closeable {
         // holder of pointer of io_uring instance
         private long _ring;
+        public static boolean available;
 
         static {
-            NativeUtils.loadLibraryFromJar(System.mapLibraryName("bsdbjni"));
-            initIDs();
+            try{
+                NativeUtils.loadLibraryFromJar(System.mapLibraryName("bsdburingjni"));
+                initIDs();
+                available = true;
+            }catch(UnsatisfiedLinkError error){
+                logger.error("Can't load native lib, IO Uring feature disabled.", error);
+                available = false;
+            }
         }
 
         public Uring(int queueDepth, long flags){
@@ -140,6 +151,9 @@ public class Native {
     public native static long pread(int fd, long position, long bufAddr, int size);
     public native static int close(int fd);
 
+    public native static long loadHash(String path);
+
+    public native static int getHash(long hashFunc, byte[] key);
 
     /** flags for open **/
     public static final int O_RDONLY = 00;
